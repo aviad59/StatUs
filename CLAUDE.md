@@ -5,12 +5,14 @@ pnpm-workspaces monorepo. Each deployable service lives in `services/*`; shared 
 ## Layout
 
 - `services/frontend` — React SPA (Vite + TS + Tailwind + React Router). See its own `CLAUDE.md`.
+- `services/backend` — NestJS API (TypeScript, Express adapter). See its own `CLAUDE.md`.
 - `packages/` — shared code (empty for now). Name packages `@status/<name>` and depend on them with `"workspace:*"`.
 
 ## Commands (run from repo root)
 
 - `pnpm install` — install all workspaces
 - `pnpm dev` — run the frontend dev server
+- `pnpm dev:backend` — run the backend in watch mode (http://localhost:3000/api)
 - `pnpm build` / `pnpm lint` / `pnpm typecheck` — run across every workspace (`pnpm -r`)
 - Target one workspace: `pnpm --filter @status/<name> <script>`
 - Add a dependency: `pnpm --filter @status/<name> add <pkg>` (never `npm install` — it creates a stray lockfile)
