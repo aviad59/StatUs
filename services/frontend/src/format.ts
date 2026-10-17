@@ -11,14 +11,19 @@ const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
   ['minute', 60],
 ]
 
-/** "לפני 5 דקות", "אתמול", "לפני שבוע"... */
-export function timeAgo(iso: string): string {
+function relativeTime(iso: string, underAMinute: string): string {
   const seconds = (new Date(iso).getTime() - Date.now()) / 1000
   for (const [unit, size] of UNITS) {
     if (Math.abs(seconds) >= size) return relative.format(Math.round(seconds / size), unit)
   }
-  return 'עכשיו'
+  return underAMinute
 }
+
+/** "לפני 5 דקות", "אתמול", "לפני שבוע"... */
+export const timeAgo = (iso: string) => relativeTime(iso, 'עכשיו')
+
+/** For future timestamps: "בעוד 12 דקות", "בעוד שעה"... */
+export const timeUntil = (iso: string) => relativeTime(iso, 'בעוד רגע')
 
 /** "18:05" */
 export const clockTime = (iso: string) =>

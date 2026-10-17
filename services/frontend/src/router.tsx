@@ -1,4 +1,5 @@
 import { createBrowserRouter } from 'react-router'
+import { commentAction, sendMessageAction, tickAction } from './actions.ts'
 import { RootLayout } from './layouts/RootLayout.tsx'
 import { conversationLoader, feedLoader, messagesLoader, rootLoader } from './loaders.ts'
 import { ConversationPage } from './pages/ConversationPage.tsx'
@@ -19,8 +20,16 @@ export const router = createBrowserRouter([
     children: [
       { index: true, loader: feedLoader, element: <FeedPage /> },
       { path: 'messages', loader: messagesLoader, element: <MessagesPage /> },
-      { path: 'messages/:id', loader: conversationLoader, element: <ConversationPage /> },
+      {
+        path: 'messages/:id',
+        loader: conversationLoader,
+        action: sendMessageAction,
+        element: <ConversationPage />,
+      },
       { path: 'profile', element: <ProfilePage /> },
+      // Action-only routes (no UI), submitted to with useFetcher().
+      { path: 'actions/tick', action: tickAction },
+      { path: 'actions/posts/:id/comments', action: commentAction },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

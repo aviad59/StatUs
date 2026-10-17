@@ -57,4 +57,18 @@ export class ConversationsService {
       messages: row.messages.map((message) => toMessage(message, me)),
     };
   }
+
+  /** The user sends a DM. The agent replies on a later tick (if it chooses to). */
+  async send(me: Me, id: string, text: string): Promise<Message> {
+    const conversation = await this.db.query.conversations.findFirst({
+      where: and(eq(conversations.id, id), eq(conversations.worldId, me.worldId)),
+    });
+    if (!conversation) throw new NotFoundException();
+
+    const [row] = await this.db
+      .insert(messages)
+      .values({ conversationId: id, senderId: me.id, text })
+      .returning();
+    return toMessage(row, me);
+  }
 }

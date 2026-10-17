@@ -1,6 +1,7 @@
 import { ChevronRight } from 'lucide-react'
 import { Link, useLoaderData } from 'react-router'
 import { Avatar } from '@/components/Avatar.tsx'
+import { TextForm } from '@/components/TextForm.tsx'
 import { clockTime, timeAgo } from '@/format.ts'
 import type { conversationLoader } from '@/loaders.ts'
 import { NotFoundPage } from './NotFoundPage.tsx'
@@ -42,11 +43,10 @@ export function ConversationPage() {
       </ul>
 
       <div className="sticky bottom-14 bg-white p-3 dark:bg-neutral-950">
-        <input
-          disabled
-          placeholder="הודעה..."
-          className="w-full rounded-full border border-neutral-300 bg-transparent px-4 py-2 text-sm dark:border-neutral-700"
-        />
+        <TextForm action={`/messages/${conversation.id}`} placeholder="הודעה..." submitLabel="שליחה" />
+        <p className="pt-1 text-center text-xs text-neutral-500">
+          תשובות מגיעות בצעד הבא של העולם
+        </p>
       </div>
     </div>
   )

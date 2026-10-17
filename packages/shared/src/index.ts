@@ -55,3 +55,44 @@ export interface Conversation {
   user: User
   messages: Message[]
 }
+
+// --- World ticks and energy ------------------------------------------------
+
+export interface Energy {
+  current: number
+  max: number
+  /** When the next point regenerates; null when full. */
+  nextAt: string | null
+}
+
+export interface WorldStatus {
+  /** Ticks run so far. */
+  tick: number
+  energy: Energy
+}
+
+/** Something an agent did during a tick. `text` is the Hebrew content they wrote. */
+export type TickEvent =
+  | { type: 'post'; actor: User; postId: string; text: string }
+  | { type: 'comment'; actor: User; postId: string; postAuthor: User; text: string }
+  | { type: 'message'; actor: User; conversationId: string; text: string }
+
+export interface TickResult {
+  world: WorldStatus
+  events: TickEvent[]
+}
+
+/** Error codes for POST /api/world/tick (HTTP 409). */
+export type TickErrorCode = 'NO_ENERGY' | 'TICK_IN_PROGRESS'
+
+// --- Request bodies ----------------------------------------------------------
+
+/** POST /api/posts/:id/comments → Comment */
+export interface CreateCommentBody {
+  text: string
+}
+
+/** POST /api/conversations/:id/messages → Message */
+export interface SendMessageBody {
+  text: string
+}

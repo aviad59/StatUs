@@ -2,7 +2,14 @@
 
 import { type LoaderFunctionArgs, useRouteLoaderData } from 'react-router'
 import { ApiError, api } from '@/api.ts'
-import type { Conversation, ConversationSummary, Post, StoryGroup, User } from '@/types.ts'
+import type {
+  Conversation,
+  ConversationSummary,
+  Post,
+  StoryGroup,
+  User,
+  WorldStatus,
+} from '@/types.ts'
 
 export const rootLoader = ({ request }: LoaderFunctionArgs) =>
   api<User>('/me', { signal: request.signal })
@@ -11,11 +18,12 @@ export const rootLoader = ({ request }: LoaderFunctionArgs) =>
 export const useCurrentUser = () => useRouteLoaderData<typeof rootLoader>('root')!
 
 export async function feedLoader({ request }: LoaderFunctionArgs) {
-  const [posts, storyGroups] = await Promise.all([
+  const [posts, storyGroups, world] = await Promise.all([
     api<Post[]>('/feed', { signal: request.signal }),
     api<StoryGroup[]>('/stories', { signal: request.signal }),
+    api<WorldStatus>('/world', { signal: request.signal }),
   ])
-  return { posts, storyGroups }
+  return { posts, storyGroups, world }
 }
 
 export const messagesLoader = ({ request }: LoaderFunctionArgs) =>

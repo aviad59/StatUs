@@ -3,6 +3,7 @@ import { useState } from 'react'
 import { timeAgo } from '@/format.ts'
 import type { Post } from '@/types.ts'
 import { Avatar } from './Avatar.tsx'
+import { TextForm } from './TextForm.tsx'
 
 const PREVIEW_COMMENTS = 2
 
@@ -46,6 +47,12 @@ export function PostCard({ post }: { post: Post }) {
             </li>
           ))}
         </ul>
+        <TextForm
+          action={`/actions/posts/${post.id}/comments`}
+          placeholder="הוספת תגובה..."
+          submitLabel="פרסום"
+          className="pt-2"
+        />
       </div>
     </article>
   )

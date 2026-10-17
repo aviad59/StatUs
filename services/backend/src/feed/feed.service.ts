@@ -1,16 +1,27 @@
-import { Inject, Injectable } from '@nestjs/common';
-import type { Post, StoryGroup } from '@status/shared';
-import { asc, desc, eq } from 'drizzle-orm';
+import { Inject, Injectable, NotFoundException } from '@nestjs/common';
+import type { Comment, Post, StoryGroup } from '@status/shared';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import { toUser } from '../accounts/to-user';
 import type { Db } from '../db/client';
 import { DB } from '../db/db.module';
-import { comments, posts, stories } from '../db/schema';
+import { type accounts, comments, posts, stories } from '../db/schema';
 
 const FEED_LIMIT = 50;
 
 @Injectable()
 export class FeedService {
   constructor(@Inject(DB) private readonly db: Db) {}
+
+  /** The user comments on a post in their world. Agents notice it on the next tick. */
+  async addComment(me: typeof accounts.$inferSelect, postId: string, text: string): Promise<Comment> {
+    const post = await this.db.query.posts.findFirst({
+      where: and(eq(posts.id, postId), eq(posts.worldId, me.worldId)),
+    });
+    if (!post) throw new NotFoundException();
+
+    const [row] = await this.db.insert(comments).values({ postId, authorId: me.id, text }).returning();
+    return { id: row.id, author: toUser(me), text: row.text, createdAt: row.createdAt.toISOString() };
+  }
 
   async getPosts(worldId: string): Promise<Post[]> {
     const rows = await this.db.query.posts.findMany({

@@ -2,15 +2,29 @@
 
 export class ApiError extends Error {
   readonly status: number
+  /** Machine-readable error code from the response body, when the backend sends one. */
+  readonly code: string | undefined
 
-  constructor(status: number, path: string) {
-    super(`GET /api${path} failed with ${status}`)
+  constructor(status: number, method: string, path: string, code?: string) {
+    super(`${method} /api${path} failed with ${status}${code ? ` (${code})` : ''}`)
     this.status = status
+    this.code = code
   }
 }
 
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   const response = await fetch(`/api${path}`, init)
-  if (!response.ok) throw new ApiError(response.status, path)
+  if (!response.ok) {
+    const body = (await response.json().catch(() => null)) as { code?: string } | null
+    throw new ApiError(response.status, init?.method ?? 'GET', path, body?.code)
+  }
   return response.json() as Promise<T>
 }
+
+export const post = <T>(path: string, body?: unknown, signal?: AbortSignal) =>
+  api<T>(path, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: body === undefined ? undefined : JSON.stringify(body),
+    signal,
+  })

@@ -27,6 +27,14 @@ const createdAt = () => timestamp('created_at', { withTimezone: true }).notNull(
 
 export const worlds = pgTable('worlds', {
   id: id(),
+  // How many ticks (world steps) have run.
+  tick: integer('tick').notNull().default(0),
+  // The user's energy as of energyUpdatedAt; it regenerates over time (see world/energy.ts).
+  energy: integer('energy').notNull().default(5),
+  energyUpdatedAt: timestamp('energy_updated_at', { withTimezone: true }).notNull().defaultNow(),
+  lastTickAt: timestamp('last_tick_at', { withTimezone: true }),
+  // Set while a tick runs, so a world never runs two ticks at once.
+  tickingSince: timestamp('ticking_since', { withTimezone: true }),
   createdAt: createdAt(),
 }).enableRLS();
 
