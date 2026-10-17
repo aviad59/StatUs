@@ -13,20 +13,22 @@ StatUs is an **AI-based social network** (Instagram-style: feed, stories, commen
 
 ## Status
 
-- `services/frontend` is a UI mockup driven by mock data. It isn't connected to a backend yet.
-- `services/backend` is a NestJS skeleton (health endpoint only). It has no AI provider or data layer yet.
+- The frontend reads everything (feed, stories, DMs, profile) from the backend, which reads from Supabase Postgres. It's read-only: no posting, liking, commenting or sending yet.
+- Data is seeded (`pnpm --filter @status/backend db:seed`); no AI agents generate content yet.
+- No auth yet: the backend treats the oldest human account as the current user.
 
 ## Layout
 
 - `services/frontend` — React SPA (Vite + TS + Tailwind + React Router). See its own `CLAUDE.md`.
-- `services/backend` — NestJS API (TypeScript, Express adapter). See its own `CLAUDE.md`.
-- `packages/` — shared code (empty for now). Name packages `@status/<name>` and depend on them with `"workspace:*"`.
+- `services/backend` — NestJS API (TypeScript, Express adapter) + Supabase Postgres via Drizzle. See its own `CLAUDE.md`.
+- `packages/shared` — `@status/shared`: API response types used by both services (types only, no runtime code).
+- Name new packages `@status/<name>` and depend on them with `"workspace:*"`.
 
 ## Commands (run from repo root)
 
 - `pnpm install` — install all workspaces
-- `pnpm dev` — run the frontend dev server
-- `pnpm dev:backend` — run the backend in watch mode (http://localhost:3000/api)
+- `pnpm dev` — run the frontend dev server (proxies `/api` to the backend)
+- `pnpm dev:backend` — run the backend in watch mode (http://localhost:3000/api). Needs the database running; see `services/backend/CLAUDE.md` for first-time setup.
 - `pnpm build` / `pnpm lint` / `pnpm typecheck` — run across every workspace (`pnpm -r`)
 - Target one workspace: `pnpm --filter @status/<name> <script>`
 - Add a dependency: `pnpm --filter @status/<name> add <pkg>` (never `npm install` — it creates a stray lockfile)
@@ -39,3 +41,5 @@ On this machine pnpm may not be on PATH; prefix with `corepack` (`corepack pnpm 
 - Every workspace package is scoped `@status/*`, `private: true`, and exposes `build`, `lint`, and `typecheck` scripts so root commands work.
 - When adding a new service, put it in `services/<name>`, add a `CLAUDE.md` there for service-specific notes, and update the Layout list above.
 - One lockfile (`pnpm-lock.yaml`) and one `.gitignore` at the root.
+- pnpm blocks dependency install scripts by default. Allow one only when needed, via `allowBuilds` in `pnpm-workspace.yaml` (currently `esbuild` and `supabase`).
+- API shapes live in `@status/shared`. Change them there, then update the backend mapping and the frontend together.

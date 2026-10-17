@@ -1,8 +1,12 @@
-import { Link } from 'react-router'
+import { Link, useLoaderData } from 'react-router'
 import { Avatar } from '@/components/Avatar.tsx'
-import { conversations, currentUser } from '@/mocks/data.ts'
+import { timeAgo } from '@/format.ts'
+import { type messagesLoader, useCurrentUser } from '@/loaders.ts'
 
 export function MessagesPage() {
+  const currentUser = useCurrentUser()
+  const conversations = useLoaderData<typeof messagesLoader>()
+
   return (
     <>
       <header className="px-4 py-3">
@@ -11,7 +15,7 @@ export function MessagesPage() {
       <h2 className="px-4 pb-2 font-semibold">הודעות</h2>
       <ul>
         {conversations.map((conversation) => {
-          const last = conversation.messages.at(-1)
+          const last = conversation.lastMessage
           return (
             <li key={conversation.id}>
               <Link
@@ -21,10 +25,12 @@ export function MessagesPage() {
                 <Avatar src={conversation.user.avatarUrl} alt={conversation.user.username} size={52} />
                 <div className="min-w-0 text-sm">
                   <p className="font-medium">{conversation.user.name}</p>
-                  <p className="truncate text-neutral-500">
-                    {last?.fromMe ? 'את/ה: ' : ''}
-                    {last?.text} · {conversation.lastActive}
-                  </p>
+                  {last && (
+                    <p className="truncate text-neutral-500">
+                      {last.fromMe ? 'את/ה: ' : ''}
+                      {last.text} · {timeAgo(last.createdAt)}
+                    </p>
+                  )}
                 </div>
               </Link>
             </li>

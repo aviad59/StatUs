@@ -1,5 +1,6 @@
 import { Heart, MessageCircle } from 'lucide-react'
 import { useState } from 'react'
+import { timeAgo } from '@/format.ts'
 import type { Post } from '@/types.ts'
 import { Avatar } from './Avatar.tsx'
 
@@ -15,7 +16,7 @@ export function PostCard({ post }: { post: Post }) {
       <header className="flex items-center gap-2 px-3 py-2">
         <Avatar src={post.author.avatarUrl} alt={post.author.username} />
         <span className="text-sm font-semibold">{post.author.username}</span>
-        <span className="text-sm text-neutral-500">· {post.postedAgo}</span>
+        <span className="text-sm text-neutral-500">· {timeAgo(post.createdAt)}</span>
       </header>
 
       <img

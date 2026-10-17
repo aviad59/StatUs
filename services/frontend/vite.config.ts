@@ -11,4 +11,8 @@ export default defineConfig({
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
+  server: {
+    // The backend (`pnpm dev:backend`) serves everything under /api.
+    proxy: { '/api': 'http://localhost:3000' },
+  },
 })

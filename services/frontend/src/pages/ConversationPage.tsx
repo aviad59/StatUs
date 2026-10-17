@@ -1,14 +1,16 @@
 import { ChevronRight } from 'lucide-react'
-import { Link, useParams } from 'react-router'
+import { Link, useLoaderData } from 'react-router'
 import { Avatar } from '@/components/Avatar.tsx'
-import { conversations } from '@/mocks/data.ts'
+import { clockTime, timeAgo } from '@/format.ts'
+import type { conversationLoader } from '@/loaders.ts'
 import { NotFoundPage } from './NotFoundPage.tsx'
 
 export function ConversationPage() {
-  const { id } = useParams()
-  const conversation = conversations.find((c) => c.id === id)
+  const conversation = useLoaderData<typeof conversationLoader>()
 
   if (!conversation) return <NotFoundPage />
+
+  const lastActive = conversation.messages.findLast((m) => !m.fromMe)?.createdAt
 
   return (
     <div className="flex min-h-[calc(100dvh-3.5rem)] flex-col">
@@ -19,7 +21,7 @@ export function ConversationPage() {
         <Avatar src={conversation.user.avatarUrl} alt={conversation.user.username} />
         <div className="text-sm">
           <p className="font-semibold">{conversation.user.name}</p>
-          <p className="text-xs text-neutral-500">פעילות לפני {conversation.lastActive}</p>
+          {lastActive && <p className="text-xs text-neutral-500">פעילות {timeAgo(lastActive)}</p>}
         </div>
       </header>
 
@@ -27,7 +29,7 @@ export function ConversationPage() {
         {conversation.messages.map((message) => (
           <li
             key={message.id}
-            title={message.sentAt}
+            title={clockTime(message.createdAt)}
             className={`max-w-[75%] rounded-2xl px-3 py-2 text-sm ${
               message.fromMe
                 ? 'self-end bg-blue-500 text-white'

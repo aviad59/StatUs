@@ -1,8 +1,11 @@
+import { useLoaderData } from 'react-router'
 import { PostCard } from '@/components/PostCard.tsx'
 import { StoryBar } from '@/components/StoryBar.tsx'
-import { posts, storyGroups } from '@/mocks/data.ts'
+import type { feedLoader } from '@/loaders.ts'
 
 export function FeedPage() {
+  const { posts, storyGroups } = useLoaderData<typeof feedLoader>()
+
   return (
     <>
       <header className="px-4 pt-3">

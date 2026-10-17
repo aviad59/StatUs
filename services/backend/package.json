@@ -7,13 +7,21 @@
     "start": "node dist/main.js",
     "build": "nest build",
     "lint": "oxlint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "db:start": "supabase start",
+    "db:stop": "supabase stop",
+    "db:generate": "drizzle-kit generate",
+    "db:reset": "supabase db reset",
+    "db:seed": "tsx --env-file=.env src/db/seed.ts"
   },
   "dependencies": {
     "@nestjs/common": "^12.1.2",
     "@nestjs/config": "^12.0.1",
     "@nestjs/core": "^12.1.2",
     "@nestjs/platform-express": "^12.1.2",
+    "@status/shared": "workspace:*",
+    "drizzle-orm": "^0.45.4",
+    "postgres": "^3.4.9",
     "reflect-metadata": "^0.2.2",
     "rxjs": "^7.8.2"
   },
@@ -21,7 +29,10 @@
     "@nestjs/cli": "^12.0.8",
     "@types/express": "^5.0.6",
     "@types/node": "^24.19.2",
+    "drizzle-kit": "^0.31.11",
     "oxlint": "^1.87.0",
+    "supabase": "^2.120.0",
+    "tsx": "^4.23.15",
     "typescript": "~6.0.3"
   }
 }
