@@ -10,12 +10,14 @@ From the repo root: `pnpm --filter @status/backend <script>`, or `pnpm dev:backe
 Database:
 
 - `pnpm db:start` / `pnpm db:stop` — local Supabase stack in Docker (needs Docker Desktop running). Studio UI at http://127.0.0.1:55323.
-- `pnpm db:generate --name <change>` — after editing `src/db/schema.ts`, generate a SQL migration into `supabase/migrations/`
+- `pnpm db:generate --name <change>` — after editing `src/db/schema.ts`, generate a SQL migration into `supabase/migrations/`. For SQL drizzle can't express (extensions, functions), `pnpm exec drizzle-kit generate --custom --name <change>` creates an empty migration to fill in.
 - `pnpm db:reset` — recreate the local DB from all migrations (deletes local data)
 - `pnpm db:seed` — wipe all worlds and insert one demo world (refuses non-local DBs unless `SEED_ALLOW_REMOTE=1`)
 - Cloud (project ref `ljtyxjysctrxbptgutqm`): with the Session pooler string in `.env` as `DATABASE_URL`, apply migrations with `pnpm exec supabase db push --db-url "$DATABASE_URL"`
 
 First-time local setup: `cp .env.example .env`, `pnpm db:start`, `pnpm db:seed`, `pnpm dev`.
+
+AI: `pnpm ai:try` builds and runs `src/ai/try.ts`, one `generate()` and one of each `decide()` question type against the configured providers.
 
 ## Structure
 
@@ -23,6 +25,9 @@ First-time local setup: `cp .env.example .env`, `pnpm db:start`, `pnpm db:seed`,
 - `src/app.module.ts` — root module; register feature modules in `imports`
 - `src/<feature>/` — one folder per feature: `<feature>.module.ts`, `<feature>.controller.ts`, `<feature>.service.ts`
 - `src/db/schema.ts` — Drizzle schema, the source of truth for the database. `client.ts` creates the connection; `db.module.ts` provides it globally (`@Inject(DB) db: Db`); `seed.ts` is the dev seed.
+  - Social: `worlds`, `accounts` (the human + agents), `posts`, `comments`, `stories`, `conversations`, `messages`
+  - Agents and story: `characters` (persona + secrets, 1:1 with an agent account), `character_memories` (text + `vector(1024)` embedding, HNSW cosine index; null until embedded), `relationships` (directed score -100..100 from a character to another character or the player), `story_beats` (ordered plot points, `pending`/`active`/`done`), `story_flags` (per-world JSON key/value)
+- `src/ai/` — `AiService` (global via `AiModule`): `generate(prompt, { system })` for Hebrew text and `decide(state, question)` for typed decisions. Questions mirror Jev's primitives: `choice` (returns one of its option keys), `score` (0..1 across ordered levels), `yesNo` (probability of yes). Providers are in `src/ai/providers/`, selected by `AI_TEXT_PROVIDER` (ollama | anthropic) and `AI_DECISION_PROVIDER` (ollama | anthropic | jev).
 - `src/accounts/` — `GET /api/me`, plus `CurrentUserService` (who is making the request) and `toUser` (DB row → API `User`)
 - `src/feed/` — `GET /api/feed` (posts with comments), `GET /api/stories` (grouped by author)
 - `src/conversations/` — `GET /api/conversations`, `GET /api/conversations/:id` (DMs between the user and agents)
@@ -33,6 +38,10 @@ First-time local setup: `cp .env.example .env`, `pnpm db:start`, `pnpm db:seed`,
 
 - Config comes from environment variables via `@nestjs/config` (`ConfigService`), loaded from `services/backend/.env`. Document every new variable in `.env.example`; never commit `.env` or API keys.
 - Keep calls to external APIs and AI providers inside services, never in controllers.
+- All AI calls go through `AiService`, never a provider directly. `generate()` prepends `HEBREW_RULE` to the system prompt. Keep decision questions and option keys in English (they're code), and Hebrew in what the user sees.
+- Personas, secrets, memories and beat descriptions are stored in Hebrew. Personas are written as instructions to the character in the second person ("את מאיה...").
+- The Jev provider was written from the docs and hasn't been run (no API key yet); verify it, especially the `score` range, before relying on it.
+- `EMBEDDING_DIMENSIONS` (1024) must match the embedding model; changing it requires a migration.
 - **Scope every query to the current user's world** (`worldId`). Worlds are private; one user must never see another world's rows.
 - Every table enables RLS with no policies (`.enableRLS()` in the schema), which keeps Supabase's public REST API closed. The backend connects as `postgres` and bypasses RLS. Keep this on for new tables.
 - Responses use the types from `@status/shared` (`import type`). Convert `Date` to ISO strings when mapping rows.

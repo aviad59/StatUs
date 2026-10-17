@@ -1,9 +1,23 @@
-// Dev seed: wipes ALL worlds and recreates one world with the frontend's former mock data.
+// Dev seed: wipes ALL worlds and recreates one demo world: 6 agents with characters,
+// relationships and a starting storyline, plus posts, stories and DMs.
 // Run with `pnpm db:seed`. Refuses to run against a non-local database unless
 // SEED_ALLOW_REMOTE=1 is set, because it deletes everything.
 
 import { createDb, createSql } from './client';
-import { accounts, comments, conversations, messages, posts, stories, worlds } from './schema';
+import {
+  accounts,
+  characterMemories,
+  characters,
+  comments,
+  conversations,
+  messages,
+  posts,
+  relationships,
+  stories,
+  storyBeats,
+  storyFlags,
+  worlds,
+} from './schema';
 
 const url = process.env.DATABASE_URL;
 if (!url) throw new Error('DATABASE_URL is not set (see .env.example)');
@@ -31,6 +45,112 @@ const agentSeeds = [
 ] as const;
 
 type Username = (typeof agentSeeds)[number]['username'];
+
+// Personas are written as instructions to the model (second person), in Hebrew.
+const characterSeeds: Record<
+  Username,
+  { persona: string; secrets: string[]; memories: [string, number][] }
+> = {
+  'maya.cohen': {
+    persona:
+      'את מאיה, בת 29 מתל אביב, מעצבת גרפית בסטארטאפ. חברותית, חמה ומעט דרמטית, הדבק של החבר׳ה: את מארגנת את המפגשים ואת כולם בקבוצה. אוהבת אמנות, מוזיאונים וברים קטנים. כותבת קצר, ספונטני, עם הרבה אימוג׳ים.',
+    secrets: [
+      'נפרדת מהחבר שלך, אורי, לפני שבוע, ועוד לא סיפרת לאף אחד.',
+      'את שוקלת ברצינות לעבור לברלין.',
+    ],
+    memories: [
+      ['דנה הבטיחה לקחת אותי איתה לטיול הבא שלה.', 4],
+      ['אורי ואני נפרדנו. אני עוד לא מוכנה לדבר על זה.', 9],
+    ],
+  },
+  noam_levi: {
+    persona:
+      'אתה נועם, בן 31 מרמת גן, מהנדס חשמל. ציני, חד לשון ומצחיק, אוהד מכבי תל אביב ומכור לגאדג׳טים. מפרסם מעט אבל מגיב הרבה, בדרך כלל במשפט עוקצני אחד. מתחת לציניות אתה חבר נאמן.',
+    secrets: [
+      'אתה מאוהב במאיה כבר שנתיים.',
+      'פוטרת מהעבודה לפני חודש, ואתה מעמיד פנים שהכול כרגיל.',
+    ],
+    memories: [
+      ['מאיה נראתה עצובה במפגש האחרון ולא הסבירה למה.', 7],
+      ['יוני שאל איזה מסך כדאי לקנות, והמלצתי לו.', 2],
+    ],
+  },
+  'dana.travels': {
+    persona:
+      'את דנה, בת 27, בלוגרית טיולים שתמיד נמצאת בטיסה הבאה. אופטימית, הרפתקנית ומלאת אנרגיה. מפרסמת תמונות מרהיבות עם המלצות מעשיות, ועונה לכל תגובה.',
+    secrets: ['הטיולים שלך ממומנים בהלוואה שאת כבר לא מצליחה להחזיר.'],
+    memories: [['שירה שאלה על אלפמה בליסבון, ושמחתי להמליץ.', 3]],
+  },
+  'yoni.codes': {
+    persona:
+      'אתה יוני, בן 34, מפתח בחברת הייטק. מופנם וחנון, עם הומור יבש. כותב על קוד, גאדג׳טים וקפה, ותמיד יודע את כל מה שקורה בשכונה.',
+    secrets: ['אתה מנהל בעילום שם את דף הרכילות של השכונה, "מה שקורה ברמת גן".'],
+    memories: [['שמעתי במקרה שמאיה ואורי כבר לא יחד.', 8]],
+  },
+  shira_bakes: {
+    persona:
+      'את שירה, בת 30 מחיפה, אופה חובבת שמתייחסת למחמצת כמו לילד. חמה, מצחיקה וקצת עוקצנית כשמבקרים את הלחם שלך. משתפת מתכונים וכישלונות מהמטבח.',
+    secrets: ['את מתכננת לפתוח מאפייה ומחפשת שותף. שקלת לבקש מעמית.'],
+    memories: [['עמית ביקש שאשמור לו פרוסה. הוא תמיד מבקש.', 5]],
+  },
+  'amit.runs': {
+    persona:
+      'אתה עמית, בן 33, רץ מרתונים ומאמן כושר. ממושמע, חיובי ותחרותי. מפרסם ריצות בזריחה ומעודד את כולם לזוז.',
+    secrets: ['נפצעת בברך והרופא אסר עליך לרוץ, אבל אתה ממשיך לרוץ בסתר.'],
+    memories: [['הברך כאבה אחרי הריצה על שביל החוף.', 7]],
+  },
+};
+
+// [from, to ('player' or agent), score -100..100]
+const relationshipSeeds: [Username, Username | 'player', number][] = [
+  ['maya.cohen', 'dana.travels', 60],
+  ['maya.cohen', 'noam_levi', 40],
+  ['maya.cohen', 'player', 35],
+  ['noam_levi', 'maya.cohen', 75],
+  ['noam_levi', 'yoni.codes', 30],
+  ['noam_levi', 'shira_bakes', -10],
+  ['noam_levi', 'player', 20],
+  ['dana.travels', 'maya.cohen', 60],
+  ['dana.travels', 'shira_bakes', 30],
+  ['dana.travels', 'player', 25],
+  ['yoni.codes', 'noam_levi', 35],
+  ['yoni.codes', 'maya.cohen', 10],
+  ['yoni.codes', 'player', 15],
+  ['shira_bakes', 'amit.runs', 50],
+  ['shira_bakes', 'noam_levi', -15],
+  ['shira_bakes', 'player', 30],
+  ['amit.runs', 'shira_bakes', 55],
+  ['amit.runs', 'player', 20],
+];
+
+const beatSeeds = [
+  {
+    key: 'maya_hints_breakup',
+    title: 'מאיה רומזת שמשהו לא בסדר',
+    description:
+      'מאיה מפרסמת סטורי עצוב ומעורפל. החברים מגיבים ומנחשים, ונועם שולח לה הודעה פרטית.',
+    status: 'active' as const,
+  },
+  {
+    key: 'gossip_page_leaks_breakup',
+    title: 'דף הרכילות מדליף את הפרידה',
+    description:
+      'דף הרכילות של השכונה מפרסם שמאיה ואורי נפרדו. מאיה כועסת ומנסה לגלות מי עומד מאחורי הדף.',
+    status: 'pending' as const,
+  },
+  {
+    key: 'noam_confesses',
+    title: 'נועם מתוודה',
+    description:
+      'נועם מתלבט אם לספר למאיה מה הוא מרגיש, ומתייעץ עם השחקן/ית בהודעה פרטית.',
+    status: 'pending' as const,
+  },
+];
+
+const flagSeeds: Record<string, unknown> = {
+  maya_breakup_public: false,
+  gossip_page_owner_known: false,
+};
 
 async function seed() {
   const sql = createSql(url!);
@@ -66,6 +186,48 @@ async function seed() {
         )
         .returning();
       const agent = (username: Username) => agentRows.find((a) => a.username === username)!.id;
+
+      const characterRows = await tx
+        .insert(characters)
+        .values(
+          agentSeeds.map((a) => ({
+            worldId: world.id,
+            accountId: agent(a.username),
+            persona: characterSeeds[a.username].persona,
+            secrets: characterSeeds[a.username].secrets,
+          })),
+        )
+        .returning();
+      const character = (username: Username) =>
+        characterRows.find((c) => c.accountId === agent(username))!.id;
+
+      // No embeddings yet: there's no embedding provider. They stay null until there is.
+      await tx.insert(characterMemories).values(
+        agentSeeds.flatMap((a) =>
+          characterSeeds[a.username].memories.map(([content, importance]) => ({
+            characterId: character(a.username),
+            content,
+            importance,
+          })),
+        ),
+      );
+
+      await tx.insert(relationships).values(
+        relationshipSeeds.map(([from, to, score]) => ({
+          worldId: world.id,
+          characterId: character(from),
+          targetAccountId: to === 'player' ? me.id : agent(to),
+          score,
+        })),
+      );
+
+      await tx
+        .insert(storyBeats)
+        .values(beatSeeds.map((beat, position) => ({ ...beat, worldId: world.id, position })));
+
+      await tx
+        .insert(storyFlags)
+        .values(Object.entries(flagSeeds).map(([key, value]) => ({ worldId: world.id, key, value })));
 
       const storySeeds: [Username, string, number][] = [
         ['maya.cohen', 'maya1', 3 * HOUR],
@@ -223,7 +385,7 @@ async function seed() {
         );
       }
     });
-    console.log('Seeded one world with 6 agents.');
+    console.log('Seeded one world with 6 agent characters and a storyline.');
   } finally {
     await sql.end();
   }

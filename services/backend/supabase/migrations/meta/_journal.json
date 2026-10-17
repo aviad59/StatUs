@@ -8,6 +8,20 @@
       "when": 1791836749066,
       "tag": "20261012202549_init",
       "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1792262079500,
+      "tag": "20261017183439_enable_pgvector",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1792262086490,
+      "tag": "20261017183446_characters_and_story",
+      "breakpoints": true
     }
   ]
 }

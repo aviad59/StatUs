@@ -1,13 +1,18 @@
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
+  check,
   index,
   integer,
+  jsonb,
   pgEnum,
   pgTable,
+  primaryKey,
+  smallint,
   text,
   timestamp,
   unique,
   uuid,
+  vector,
 } from 'drizzle-orm/pg-core';
 
 // Every human user gets a private world. All other rows belong to exactly one
@@ -39,8 +44,6 @@ export const accounts = pgTable(
     username: text('username').notNull(),
     name: text('name').notNull(),
     avatarUrl: text('avatar_url').notNull(),
-    // Agent persona prompt; null for the human.
-    persona: text('persona'),
     createdAt: createdAt(),
   },
   (t) => [unique().on(t.worldId, t.username)],
@@ -130,8 +133,139 @@ export const messages = pgTable(
   (t) => [index().on(t.conversationId, t.createdAt)],
 ).enableRLS();
 
+// ---------------------------------------------------------------------------
+// Agents and story state. Content in these tables (personas, secrets, memories,
+// beat descriptions) is written in Hebrew, like everything user-facing.
+
+// The mind behind an agent account: who they are and what they hide.
+export const characters = pgTable('characters', {
+  id: id(),
+  worldId: uuid('world_id')
+    .notNull()
+    .references(() => worlds.id, { onDelete: 'cascade' }),
+  accountId: uuid('account_id')
+    .notNull()
+    .unique()
+    .references(() => accounts.id, { onDelete: 'cascade' }),
+  // Personality, background, voice and posting habits. Goes into the system prompt.
+  persona: text('persona').notNull(),
+  // Things the character knows but won't say openly (yet). Story beats can reveal them.
+  secrets: text('secrets').array().notNull().default(sql`'{}'::text[]`),
+  createdAt: createdAt(),
+}).enableRLS();
+
+// Must match the embedding model's output size. 1024 fits multilingual models with
+// good Hebrew support (e.g. bge-m3 on Ollama, voyage-3.5). Changing it needs a migration.
+export const EMBEDDING_DIMENSIONS = 1024;
+
+// What a character remembers, retrieved by similarity search over `embedding`.
+export const characterMemories = pgTable(
+  'character_memories',
+  {
+    id: id(),
+    characterId: uuid('character_id')
+      .notNull()
+      .references(() => characters.id, { onDelete: 'cascade' }),
+    content: text('content').notNull(),
+    // 1 (trivial) .. 10 (life-changing); used to rank and to decide what to forget.
+    importance: smallint('importance').notNull().default(5),
+    // Null until an embedding provider has processed the memory.
+    embedding: vector('embedding', { dimensions: EMBEDDING_DIMENSIONS }),
+    createdAt: createdAt(),
+  },
+  (t) => [
+    index().on(t.characterId, t.createdAt),
+    index('character_memories_embedding_index').using('hnsw', t.embedding.op('vector_cosine_ops')),
+    check('character_memories_importance_range', sql`${t.importance} between 1 and 10`),
+  ],
+).enableRLS();
+
+// How a character feels about another account: another character or the player.
+// Directed: A's score toward B is independent of B's toward A. The player has no
+// row of their own; their feelings are whatever they do.
+export const relationships = pgTable(
+  'relationships',
+  {
+    id: id(),
+    worldId: uuid('world_id')
+      .notNull()
+      .references(() => worlds.id, { onDelete: 'cascade' }),
+    characterId: uuid('character_id')
+      .notNull()
+      .references(() => characters.id, { onDelete: 'cascade' }),
+    targetAccountId: uuid('target_account_id')
+      .notNull()
+      .references(() => accounts.id, { onDelete: 'cascade' }),
+    // -100 (hostile) .. 0 (neutral) .. 100 (devoted)
+    score: integer('score').notNull().default(0),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    unique().on(t.characterId, t.targetAccountId),
+    index().on(t.targetAccountId),
+    check('relationships_score_range', sql`${t.score} between -100 and 100`),
+  ],
+).enableRLS();
+
+export const storyBeatStatus = pgEnum('story_beat_status', ['pending', 'active', 'done']);
+
+// Plot points for the world's storyline, played in `position` order.
+export const storyBeats = pgTable(
+  'story_beats',
+  {
+    id: id(),
+    worldId: uuid('world_id')
+      .notNull()
+      .references(() => worlds.id, { onDelete: 'cascade' }),
+    // Stable identifier for code and flags, e.g. 'maya_reveals_breakup'.
+    key: text('key').notNull(),
+    title: text('title').notNull(),
+    // What happens, for the agents to act out.
+    description: text('description').notNull(),
+    position: integer('position').notNull(),
+    status: storyBeatStatus('status').notNull().default('pending'),
+    createdAt: createdAt(),
+    completedAt: timestamp('completed_at', { withTimezone: true }),
+  },
+  (t) => [unique().on(t.worldId, t.key), index().on(t.worldId, t.position)],
+).enableRLS();
+
+// Facts about the world's story so far, e.g. player_knows_secret = true.
+export const storyFlags = pgTable(
+  'story_flags',
+  {
+    worldId: uuid('world_id')
+      .notNull()
+      .references(() => worlds.id, { onDelete: 'cascade' }),
+    key: text('key').notNull(),
+    // Any JSON: boolean, number, string or object.
+    value: jsonb('value').notNull(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [primaryKey({ columns: [t.worldId, t.key] })],
+).enableRLS();
+
 export const accountsRelations = relations(accounts, ({ one }) => ({
   world: one(worlds, { fields: [accounts.worldId], references: [worlds.id] }),
+  character: one(characters),
+}));
+
+export const charactersRelations = relations(characters, ({ one, many }) => ({
+  account: one(accounts, { fields: [characters.accountId], references: [accounts.id] }),
+  memories: many(characterMemories),
+  relationships: many(relationships),
+}));
+
+export const characterMemoriesRelations = relations(characterMemories, ({ one }) => ({
+  character: one(characters, {
+    fields: [characterMemories.characterId],
+    references: [characters.id],
+  }),
+}));
+
+export const relationshipsRelations = relations(relationships, ({ one }) => ({
+  character: one(characters, { fields: [relationships.characterId], references: [characters.id] }),
+  target: one(accounts, { fields: [relationships.targetAccountId], references: [accounts.id] }),
 }));
 
 export const postsRelations = relations(posts, ({ one, many }) => ({
