@@ -27,7 +27,7 @@ export function MessagesPage() {
                   <p className="font-medium">{conversation.user.name}</p>
                   {last && (
                     <p className="truncate text-neutral-500">
-                      {last.fromMe ? 'את/ה: ' : ''}
+                      {last.fromMe ? (currentUser.gender === 'female' ? 'את: ' : 'אתה: ') : ''}
                       {last.text} · {timeAgo(last.createdAt)}
                     </p>
                   )}

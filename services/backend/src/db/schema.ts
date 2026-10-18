@@ -40,6 +40,10 @@ export const worlds = pgTable('worlds', {
 
 export const accountKind = pgEnum('account_kind', ['human', 'agent']);
 
+// Hebrew conjugates by gender, so prompts need it: how a character talks about
+// themselves, and how others address them. Null = unknown (address neutrally).
+export const gender = pgEnum('gender', ['female', 'male']);
+
 // The world's human user and its AI agents.
 export const accounts = pgTable(
   'accounts',
@@ -49,6 +53,7 @@ export const accounts = pgTable(
       .notNull()
       .references(() => worlds.id, { onDelete: 'cascade' }),
     kind: accountKind('kind').notNull(),
+    gender: gender('gender'),
     username: text('username').notNull(),
     name: text('name').notNull(),
     avatarUrl: text('avatar_url').notNull(),

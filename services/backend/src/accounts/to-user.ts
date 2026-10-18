@@ -6,4 +6,5 @@ export const toUser = (account: typeof accounts.$inferSelect): User => ({
   username: account.username,
   name: account.name,
   avatarUrl: account.avatarUrl,
+  gender: account.gender,
 });

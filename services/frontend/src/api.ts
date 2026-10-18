@@ -21,10 +21,15 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>
 }
 
-export const post = <T>(path: string, body?: unknown, signal?: AbortSignal) =>
-  api<T>(path, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: body === undefined ? undefined : JSON.stringify(body),
-    signal,
-  })
+const send =
+  (method: 'POST' | 'PATCH') =>
+  <T>(path: string, body?: unknown, signal?: AbortSignal) =>
+    api<T>(path, {
+      method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal,
+    })
+
+export const post = send('POST')
+export const patch = send('PATCH')

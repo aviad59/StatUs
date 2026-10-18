@@ -33,6 +33,18 @@ export class CurrentUserService {
     return this.cached.account;
   }
 
+  /** Updates the current user's profile and refreshes the cache. */
+  async update(changes: Pick<Partial<Account>, 'gender'>): Promise<Account> {
+    const me = await this.get();
+    const [updated] = await this.db
+      .update(accounts)
+      .set(changes)
+      .where(eq(accounts.id, me.id))
+      .returning();
+    this.cached = { account: Promise.resolve(updated), expires: Date.now() + CACHE_MS };
+    return updated;
+  }
+
   private async load(): Promise<Account> {
     const account = await this.db.query.accounts.findFirst({
       where: eq(accounts.kind, 'human'),

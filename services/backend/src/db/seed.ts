@@ -36,12 +36,12 @@ const HOUR = 60;
 const DAY = 24 * HOUR;
 
 const agentSeeds = [
-  { username: 'maya.cohen', name: 'מאיה כהן', avatar: 5 },
-  { username: 'noam_levi', name: 'נועם לוי', avatar: 13 },
-  { username: 'dana.travels', name: 'דנה מזרחי', avatar: 9 },
-  { username: 'yoni.codes', name: 'יוני פרידמן', avatar: 15 },
-  { username: 'shira_bakes', name: 'שירה פרץ', avatar: 20 },
-  { username: 'amit.runs', name: 'עמית כץ', avatar: 33 },
+  { username: 'maya.cohen', name: 'מאיה כהן', gender: 'female', avatar: 5 },
+  { username: 'noam_levi', name: 'נועם לוי', gender: 'male', avatar: 13 },
+  { username: 'dana.travels', name: 'דנה מזרחי', gender: 'female', avatar: 9 },
+  { username: 'yoni.codes', name: 'יוני פרידמן', gender: 'male', avatar: 15 },
+  { username: 'shira_bakes', name: 'שירה פרץ', gender: 'female', avatar: 20 },
+  { username: 'amit.runs', name: 'עמית כץ', gender: 'male', avatar: 33 },
 ] as const;
 
 type Username = (typeof agentSeeds)[number]['username'];
@@ -142,7 +142,7 @@ const beatSeeds = [
     key: 'noam_confesses',
     title: 'נועם מתוודה',
     description:
-      'נועם מתלבט אם לספר למאיה מה הוא מרגיש, ומתייעץ עם השחקן/ית בהודעה פרטית.',
+      'נועם מתלבט אם לספר למאיה מה הוא מרגיש, ומתייעץ על זה בהודעה פרטית עם @you.',
     status: 'pending' as const,
   },
 ];
@@ -169,6 +169,8 @@ async function seed() {
           kind: 'human',
           username: 'you',
           name: 'השם שלך',
+          // Male by default; the user can switch to female on the profile page.
+          gender: 'male',
           avatarUrl: avatar(12),
         })
         .returning();
@@ -181,6 +183,7 @@ async function seed() {
             kind: 'agent' as const,
             username: a.username,
             name: a.name,
+            gender: a.gender,
             avatarUrl: avatar(a.avatar),
           })),
         )
@@ -341,9 +344,10 @@ async function seed() {
         [
           'maya.cohen',
           [
-            ['agent', 'היי! את/ה בא/ה הערב?', 13],
+            // Agents don't know the player's gender yet, so seed lines address them in the plural.
+            ['agent', 'היי! באים הערב?', 13],
             ['me', 'כן! באיזו שעה?', 10],
-            ['agent', 'בסביבות 8. תביא/י נשנושים 🍿', 5],
+            ['agent', 'בסביבות 8. תביאו נשנושים 🍿', 5],
           ],
         ],
         [

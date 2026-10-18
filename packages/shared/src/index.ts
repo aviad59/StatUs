@@ -2,11 +2,16 @@
 // Types only: this package has no runtime code, so import it with `import type`.
 // Timestamps are ISO 8601 strings; the frontend formats them for display.
 
+/** Hebrew conjugates by gender, so agents need it to talk about and to someone. */
+export type Gender = 'female' | 'male'
+
 export interface User {
   id: string
   username: string
   name: string
   avatarUrl: string
+  /** Null when unknown; agents then address the account neutrally. */
+  gender: Gender | null
 }
 
 export interface Comment {
@@ -86,6 +91,11 @@ export interface TickResult {
 export type TickErrorCode = 'NO_ENERGY' | 'TICK_IN_PROGRESS'
 
 // --- Request bodies ----------------------------------------------------------
+
+/** PATCH /api/me → User */
+export interface UpdateMeBody {
+  gender: Gender
+}
 
 /** POST /api/posts/:id/comments → Comment */
 export interface CreateCommentBody {

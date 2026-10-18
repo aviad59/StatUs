@@ -66,6 +66,10 @@ const DM_HISTORY = 8;
 
 const photo = (seed: string) => `https://picsum.photos/seed/${seed}/600/600`;
 
+// Lower than the usual default (~0.8): small models produce broken Hebrew (dropped
+// letters, made-up words) noticeably more often at high temperature.
+const SHORT_TEXT = { temperature: 0.6, maxTokens: 200 };
+
 @Injectable()
 export class AgentService {
   constructor(
@@ -174,13 +178,14 @@ export class AgentService {
   }
 
   // Prompts are in Hebrew on purpose: English instructions make the model "think" in
-  // English and the Hebrew comes out sounding translated. Instructions use the
-  // infinitive ("לכתוב") so they work for any character's gender.
+  // English and the Hebrew comes out sounding translated. Task instructions use the
+  // infinitive ("לכתוב"); gender is stated explicitly (see selfGender / addressAs).
   private systemPrompt(ctx: TickContext, character: Character, memories: string[]) {
     const lines = [
       character.persona,
       '',
       `שם המשתמש שלך הוא @${character.account.username} ברשת StatUs (רשת כמו אינסטגרם). תמיד להישאר בדמות.`,
+      selfGender(character.account),
       'לכתוב משהו חדש בקול שלך. אף פעם לא להעתיק או לחזור על מה שמישהו אחר כתב.',
     ];
     if (character.secrets.length) {
@@ -206,7 +211,7 @@ export class AgentService {
       await this.ai.generate(
         'המשימה: לכתוב כיתוב לפוסט חדש שמתפרסם עכשיו, על משהו מהחיים שלך. ' +
           'רק הכיתוב עצמו, משפט או שניים. בלי מירכאות.',
-        { system, maxTokens: 300 },
+        { system, ...SHORT_TEXT, maxTokens: 300 },
       ),
     );
     const [row] = await this.db
@@ -244,8 +249,9 @@ export class AgentService {
 
     const text = clean(
       await this.ai.generate(
-        `${postContext(target)}\n\nהמשימה: לכתוב תגובה לפוסט הזה. רק התגובה, משפט קצר אחד. בלי מירכאות.`,
-        { system, maxTokens: 200 },
+        `${postContext(target)}\n${addressAs(target.author)}\n\n` +
+          'המשימה: לכתוב תגובה לפוסט הזה. רק התגובה, משפט קצר אחד. בלי מירכאות.',
+        { system, ...SHORT_TEXT },
       ),
     );
     return this.saveComment(plan.character, target, text);
@@ -260,10 +266,10 @@ export class AgentService {
     const player = ctx.player.username;
     const text = clean(
       await this.ai.generate(
-        `${postContext(target)}\n\n` +
-          `@${player} הגיב/ה על הפוסט שלך. המשימה: לענות ל-@${player} בתגובה קצרה ` +
+        `${postContext(target)}\n${addressAs(ctx.player)}\n\n` +
+          `המשימה: לענות לתגובה האחרונה של @${player} על הפוסט שלך, בתגובה קצרה ` +
           `שמתחילה ב-@${player}. רק התגובה, משפט אחד. בלי מירכאות.`,
-        { system, maxTokens: 200 },
+        { system, ...SHORT_TEXT },
       ),
     );
     return this.saveComment(plan.character, target, text);
@@ -295,8 +301,9 @@ export class AgentService {
         (transcript
           ? `השיחה הפרטית שלך עם @${player} עד עכשיו:\n${transcript}\n\n`
           : `מתחילים עכשיו שיחה פרטית עם @${player}.\n\n`) +
+          `${addressAs(ctx.player)}\n` +
           'המשימה: לכתוב את ההודעה הבאה שלך, כמו בוואטסאפ. רק ההודעה, קצרה. בלי מירכאות.',
-        { system, maxTokens: 200 },
+        { system, ...SHORT_TEXT },
       ),
     );
 
@@ -317,6 +324,33 @@ export class AgentService {
 
   private async remember(character: Character, content: string) {
     await this.db.insert(characterMemories).values({ characterId: character.id, content, importance: 3 });
+  }
+}
+
+/** How the character refers to themselves. Hebrew verbs and adjectives agree with gender. */
+function selfGender(account: Account): string {
+  switch (account.gender) {
+    case 'female':
+      return 'את אישה: לכתוב על עצמך תמיד בלשון נקבה (למשל: "אני עייפה", "הייתי בטוחה", "אני מתה על זה").';
+    case 'male':
+      return 'אתה גבר: לכתוב על עצמך תמיד בלשון זכר (למשל: "אני עייף", "הייתי בטוח", "אני מת על זה").';
+    case null:
+      return '';
+  }
+}
+
+/** How to address (or talk about) another account. */
+function addressAs(account: Account): string {
+  switch (account.gender) {
+    case 'female':
+      return `@${account.username} היא אישה: לפנות אליה בלשון נקבה.`;
+    case 'male':
+      return `@${account.username} הוא גבר: לפנות אליו בלשון זכר.`;
+    case null:
+      return (
+        `לא ידוע אם @${account.username} גבר או אישה: לפנות בלי הטיה מגדרית, ` +
+        'למשל בלשון רבים ("מה קורה איתכם?", "באים?") או בניסוח שעוקף את זה. בלי צורות עם לוכסן.'
+      );
   }
 }
 

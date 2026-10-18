@@ -13,7 +13,7 @@ Database:
 - `pnpm db:generate --name <change>` — after editing `src/db/schema.ts`, generate a SQL migration into `supabase/migrations/`. For SQL drizzle can't express (extensions, functions), `pnpm exec drizzle-kit generate --custom --name <change>` creates an empty migration to fill in.
 - `pnpm db:reset` — recreate the local DB from all migrations (deletes local data)
 - `pnpm db:seed` — wipe all worlds and insert one demo world (refuses non-local DBs unless `SEED_ALLOW_REMOTE=1`)
-- Cloud (project ref `ljtyxjysctrxbptgutqm`): with the Session pooler string in `.env` as `DATABASE_URL`, apply migrations with `pnpm exec supabase db push --db-url "$DATABASE_URL"`
+- Cloud (project ref `rvudxcehbndngcoagasc`, Frankfurt `eu-central-1`; pick a region near Israel, since every query is a round trip): with the Session pooler string in `.env` as `DATABASE_URL`, apply migrations with `pnpm exec supabase db push --db-url "$DATABASE_URL"`
 
 First-time local setup: `cp .env.example .env`, `pnpm db:start`, `pnpm db:seed`, `pnpm dev`.
 
@@ -45,6 +45,7 @@ AI: `pnpm ai:try` builds and runs `src/ai/try.ts`, one `generate()` and one of e
 - Keep calls to external APIs and AI providers inside services, never in controllers.
 - All AI calls go through `AiService`, never a provider directly. `generate()` prepends `HEBREW_RULE` to the system prompt. Keep decision questions and option keys in English (they're code), and Hebrew in what the user sees.
 - Generation prompts (system prompt, task instructions, `HEBREW_RULE`) are written in Hebrew, using the infinitive ("לכתוב") so they fit any gender; English instructions made the output read like a translation. Decision questions stay in English.
+- Gender: `accounts.gender` (female | male | null). Prompts tell each character to write about themselves in their own gender (`selfGender`) and how to address others (`addressAs`); null (the player, for now) means address them neutrally, e.g. in the plural. Never put slashed forms ("את/ה") in seed data or prompts: models copy them.
 - Personas, secrets, memories and beat descriptions are stored in Hebrew. Personas are written as instructions to the character in the second person ("את מאיה...").
 - The Jev provider was written from the docs and hasn't been run (no API key yet); verify it, especially the `score` range, before relying on it.
 - `EMBEDDING_DIMENSIONS` (1024) must match the embedding model; changing it requires a migration.

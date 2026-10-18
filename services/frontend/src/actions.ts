@@ -3,14 +3,17 @@
 // energy and DMs refresh on their own.
 
 import { type ActionFunctionArgs, useFetchers } from 'react-router'
-import { ApiError, post } from '@/api.ts'
+import { ApiError, patch, post } from '@/api.ts'
 import type {
   Comment,
   CreateCommentBody,
+  Gender,
   Message,
   SendMessageBody,
   TickErrorCode,
   TickResult,
+  UpdateMeBody,
+  User,
 } from '@/types.ts'
 
 export type ActionResult<T> = { ok: true; data: T } | { ok: false; error: string }
@@ -30,6 +33,17 @@ function failure(error: unknown, fallback: string): { ok: false; error: string }
 
 const text = async (request: Request) =>
   String((await request.formData()).get('text') ?? '').trim()
+
+export async function updateProfileAction({ request }: ActionFunctionArgs): Promise<ActionResult<User>> {
+  const gender = (await request.formData()).get('gender')
+  if (gender !== 'male' && gender !== 'female') return { ok: false, error: 'בחירה לא תקינה' }
+  const body: UpdateMeBody = { gender: gender satisfies Gender }
+  try {
+    return { ok: true, data: await patch<User>('/me', body) }
+  } catch (error) {
+    return failure(error, 'לא הצלחנו לשמור את השינוי')
+  }
+}
 
 export async function tickAction({ request }: ActionFunctionArgs): Promise<ActionResult<TickResult>> {
   try {
