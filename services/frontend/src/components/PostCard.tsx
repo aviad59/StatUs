@@ -1,6 +1,8 @@
 import { Heart, MessageCircle } from 'lucide-react'
 import { useState } from 'react'
+import { usePendingTexts } from '@/actions.ts'
 import { timeAgo } from '@/format.ts'
+import { useCurrentUser } from '@/loaders.ts'
 import type { Post } from '@/types.ts'
 import { Avatar } from './Avatar.tsx'
 import { TextForm } from './TextForm.tsx'
@@ -9,7 +11,11 @@ const PREVIEW_COMMENTS = 2
 
 export function PostCard({ post }: { post: Post }) {
   const [showAll, setShowAll] = useState(false)
-  const comments = showAll ? post.comments : post.comments.slice(0, PREVIEW_COMMENTS)
+  const currentUser = useCurrentUser()
+  const commentAction = `/actions/posts/${post.id}/comments`
+  const pending = usePendingTexts(commentAction)
+  // Like Instagram, the preview shows the newest comments.
+  const comments = showAll ? post.comments : post.comments.slice(-PREVIEW_COMMENTS)
   const hasMore = post.comments.length > PREVIEW_COMMENTS
 
   return (
@@ -46,9 +52,14 @@ export function PostCard({ post }: { post: Post }) {
               <span className="font-semibold">{comment.author.username}</span> {comment.text}
             </li>
           ))}
+          {pending.map((text, i) => (
+            <li key={`pending-${i}`} className="opacity-50">
+              <span className="font-semibold">{currentUser.username}</span> {text}
+            </li>
+          ))}
         </ul>
         <TextForm
-          action={`/actions/posts/${post.id}/comments`}
+          action={commentAction}
           placeholder="הוספת תגובה..."
           submitLabel="פרסום"
           className="pt-2"

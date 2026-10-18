@@ -2,7 +2,7 @@
 // After an action finishes, React Router reloads the page's loaders, so the feed,
 // energy and DMs refresh on their own.
 
-import type { ActionFunctionArgs } from 'react-router'
+import { type ActionFunctionArgs, useFetchers } from 'react-router'
 import { ApiError, post } from '@/api.ts'
 import type {
   Comment,
@@ -63,4 +63,12 @@ export async function sendMessageAction({
   } catch (error) {
     return failure(error, 'לא הצלחנו לשלוח את ההודעה')
   }
+}
+
+/** Texts currently being sent to `action`, for showing them before the server confirms. */
+export function usePendingTexts(action: string): string[] {
+  return useFetchers()
+    .filter((f) => f.formAction === action && f.formData)
+    .map((f) => String(f.formData?.get('text') ?? '').trim())
+    .filter(Boolean)
 }

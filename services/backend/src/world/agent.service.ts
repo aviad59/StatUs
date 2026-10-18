@@ -40,6 +40,25 @@ export interface TickContext {
   flags: Record<string, unknown>;
 }
 
+type SpontaneousAction = 'post' | 'comment' | 'message_player' | 'nothing';
+type Action = SpontaneousAction | 'reply_to_player_comment';
+
+/** What one character will do this tick, decided before anyone acts. */
+export interface TurnPlan {
+  character: Character;
+  action: Action;
+  /**
+   * True when the player is waiting on this character (an unanswered DM or comment).
+   * Forced turns always run, before the spontaneous ones.
+   */
+  forced: boolean;
+  memories: string[];
+  dm: { id: string | undefined; history: { from: string; text: string }[] };
+  /** The character's post the player commented on, for reply_to_player_comment. */
+  repliedPost: FeedPost | undefined;
+  state: object;
+}
+
 const FEED_IN_STATE = 8;
 const COMMENTS_PER_POST = 3;
 const MEMORIES_IN_STATE = 8;
@@ -54,9 +73,12 @@ export class AgentService {
     private readonly ai: AiService,
   ) {}
 
-  /** Gives one character a turn. Returns what they did, or null if they did nothing. */
-  async takeTurn(ctx: TickContext, character: Character): Promise<TickEvent | null> {
-    const [memories, rels, dm] = await Promise.all([
+  /**
+   * Decides what a character does this tick. Plans for all characters run in
+   * parallel against the same snapshot; act() then carries them out in order.
+   */
+  async plan(ctx: TickContext, character: Character): Promise<TurnPlan> {
+    const [memoryRows, rels, dm] = await Promise.all([
       this.db.query.characterMemories.findMany({
         where: eq(characterMemories.characterId, character.id),
         orderBy: desc(characterMemories.createdAt),
@@ -72,17 +94,27 @@ export class AgentService {
     ]);
 
     const me = character.account;
-    const dmHistory = (dm?.messages ?? []).toReversed().map((m) => ({
+    const history = (dm?.messages ?? []).toReversed().map((m) => ({
       from: m.senderId === me.id ? me.username : ctx.player.username,
       text: m.text,
     }));
-    const awaitingReply = dmHistory.at(-1)?.from === ctx.player.username;
-    const feed = ctx.feed.slice(0, FEED_IN_STATE);
+    const memories = memoryRows.map((m) => m.content);
+    const repliedPost = unansweredPlayerComment(ctx, me);
+    const base = { character, memories, dm: { id: dm?.id, history }, repliedPost };
 
+    // The player is waiting: people answer DMs and comments on their own posts.
+    if (history.at(-1)?.from === ctx.player.username) {
+      return { ...base, action: 'message_player', forced: true, state: {} };
+    }
+    if (repliedPost) {
+      return { ...base, action: 'reply_to_player_comment', forced: true, state: {} };
+    }
+
+    const feed = ctx.feed.slice(0, FEED_IN_STATE);
     const state = {
       you: { username: me.username, name: me.name, persona: character.persona, secrets: character.secrets },
       player: { username: ctx.player.username, note: 'The one real human in this world.' },
-      memories: memories.map((m) => m.content),
+      memories,
       relationships: rels.map((r) => ({
         username: ctx.accountsById.get(r.targetAccountId)?.username,
         score: r.score,
@@ -95,66 +127,75 @@ export class AgentService {
         },
         flags: ctx.flags,
       },
-      feed: feed.map((p, i) => ({
-        ref: `p${i}`,
+      feed: feed.map((p) => ({
         author: p.author.username,
         caption: p.caption,
         minutesAgo: Math.round((Date.now() - p.createdAt.getTime()) / 60_000),
         latestComments: p.comments.slice(-COMMENTS_PER_POST).map((c) => `${c.author.username}: ${c.text}`),
       })),
-      dmWithPlayer: { messages: dmHistory, awaitingYourReply: awaitingReply },
+      dmWithPlayer: history,
     };
 
+    const options: Partial<Record<SpontaneousAction, string>> = {
+      post: 'Publish a new post about your life',
+      comment: 'Comment on one of the posts in the feed',
+      nothing: 'Do nothing this time',
+    };
+    // No double-texting: if the last DM is theirs, they wait for the player to answer.
+    if (history.at(-1)?.from !== me.username) {
+      options.message_player = `Send ${ctx.player.username} a private message`;
+    }
+    // decide() only ever returns one of the keys actually passed in.
     const { choice } = await this.ai.decide(state, {
       type: 'choice',
       instructions:
         `You are ${me.username}. What do you do right now? Real people mostly scroll without posting, ` +
-        'so pick "nothing" unless something in your life, the story or the feed gives you a reason. ' +
-        (awaitingReply ? `${ctx.player.username} sent you a message you haven't answered yet.` : ''),
-      options: {
-        post: 'Publish a new post about your life',
-        comment: 'Comment on one of the posts in the feed',
-        message_player: awaitingReply
-          ? `Reply to ${ctx.player.username}'s private message`
-          : `Send ${ctx.player.username} a private message`,
-        nothing: 'Do nothing this time',
-      },
+        'so pick "nothing" unless something in your life, the story or the feed gives you a reason.',
+      options: options as Record<SpontaneousAction, string>,
     });
+    return { ...base, action: choice, forced: false, state };
+  }
 
-    const system = this.systemPrompt(ctx, character, memories.map((m) => m.content));
-    switch (choice) {
+  /** Carries out a plan. Returns what happened, or null if nothing did. */
+  async act(ctx: TickContext, plan: TurnPlan): Promise<TickEvent | null> {
+    const system = this.systemPrompt(ctx, plan.character, plan.memories);
+    switch (plan.action) {
       case 'post':
-        return this.post(ctx, character, system);
+        return this.post(ctx, plan.character, system);
       case 'comment':
-        return feed.length ? this.comment(character, system, state, feed) : null;
+        return this.comment(ctx, plan, system);
+      case 'reply_to_player_comment':
+        return plan.repliedPost ? this.replyToPlayer(ctx, plan, plan.repliedPost, system) : null;
       case 'message_player':
-        return this.messagePlayer(ctx, character, system, dmHistory, dm?.id);
+        return this.messagePlayer(ctx, plan, system);
       case 'nothing':
         return null;
     }
   }
 
+  // Prompts are in Hebrew on purpose: English instructions make the model "think" in
+  // English and the Hebrew comes out sounding translated. Instructions use the
+  // infinitive ("לכתוב") so they work for any character's gender.
   private systemPrompt(ctx: TickContext, character: Character, memories: string[]) {
     const lines = [
       character.persona,
       '',
-      `You are @${character.account.username} on StatUs, an Instagram-like social network. Stay in character.`,
-      'Keep it short and natural, like a real post or message on social media.',
-      "Always write something new in your own voice. Never repeat or copy someone else's words.",
+      `שם המשתמש שלך הוא @${character.account.username} ברשת StatUs (רשת כמו אינסטגרם). תמיד להישאר בדמות.`,
+      'לכתוב משהו חדש בקול שלך. אף פעם לא להעתיק או לחזור על מה שמישהו אחר כתב.',
     ];
     if (character.secrets.length) {
       lines.push(
         '',
-        'Your secrets (never state them outright; at most hint at them if the story calls for it):',
+        'סודות שלך (לא לחשוף במפורש; לכל היותר לרמוז, ורק אם הסיפור מצדיק):',
         ...character.secrets.map((s) => `- ${s}`),
       );
     }
-    if (memories.length) lines.push('', 'Things you remember:', ...memories.map((m) => `- ${m}`));
+    if (memories.length) lines.push('', 'דברים שקרו לאחרונה:', ...memories.map((m) => `- ${m}`));
     if (ctx.activeBeat) {
       lines.push(
         '',
-        `Current storyline: ${ctx.activeBeat.title}. ${ctx.activeBeat.description}`,
-        'Act it out only if it involves you.',
+        `מה קורה עכשיו בסיפור: ${ctx.activeBeat.title}. ${ctx.activeBeat.description}`,
+        'לשלב את זה רק אם זה נוגע לדמות שלך.',
       );
     }
     return lines.join('\n');
@@ -163,8 +204,8 @@ export class AgentService {
   private async post(ctx: TickContext, character: Character, system: string): Promise<TickEvent> {
     const caption = clean(
       await this.ai.generate(
-        'Write the caption for a new post you are publishing now. Only the caption: 1-3 short sentences, ' +
-          'emoji and hashtags optional. No quotation marks.',
+        'המשימה: לכתוב כיתוב לפוסט חדש שמתפרסם עכשיו, על משהו מהחיים שלך. ' +
+          'רק הכיתוב עצמו, משפט או שניים. בלי מירכאות.',
         { system, maxTokens: 300 },
       ),
     );
@@ -185,41 +226,58 @@ export class AgentService {
     return { type: 'post', actor: toUser(character.account), postId: row.id, text: caption };
   }
 
-  private async comment(
-    character: Character,
-    system: string,
-    state: object,
-    feed: FeedPost[],
-  ): Promise<TickEvent | null> {
-    const options = Object.fromEntries(
-      feed.map((p, i) => [`p${i}`, `@${p.author.username}: ${p.caption} (${p.comments.length} comments)`]),
-    );
-    const { choice } = await this.ai.decide(state, {
+  private async comment(ctx: TickContext, plan: TurnPlan, system: string): Promise<TickEvent | null> {
+    const me = plan.character.account;
+    // Re-read the feed now: earlier turns this tick may have added posts.
+    const feed = ctx.feed.slice(0, FEED_IN_STATE).filter((p) => p.author.id !== me.id);
+    if (!feed.length) return null;
+
+    const { choice } = await this.ai.decide(plan.state, {
       type: 'choice',
-      instructions: `You are ${character.account.username}. Which post do you comment on?`,
-      options,
+      instructions: `You are ${me.username}. Which post do you comment on?`,
+      options: Object.fromEntries(
+        feed.map((p, i) => [`p${i}`, `@${p.author.username}: ${p.caption} (${p.comments.length} comments)`]),
+      ),
     });
     const target = feed[Number(choice.slice(1))];
     if (!target) return null;
 
-    const thread = target.comments
-      .slice(-COMMENTS_PER_POST)
-      .map((c) => `@${c.author.username}: ${c.text}`)
-      .join('\n');
     const text = clean(
       await this.ai.generate(
-        `Post by @${target.author.username}: "${target.caption}"\n` +
-          (thread ? `Latest comments:\n${thread}\n` : '') +
-          '\nWrite your comment on this post. Only the comment, one short sentence. No quotation marks.',
+        `${postContext(target)}\n\nהמשימה: לכתוב תגובה לפוסט הזה. רק התגובה, משפט קצר אחד. בלי מירכאות.`,
         { system, maxTokens: 200 },
       ),
     );
+    return this.saveComment(plan.character, target, text);
+  }
+
+  private async replyToPlayer(
+    ctx: TickContext,
+    plan: TurnPlan,
+    target: FeedPost,
+    system: string,
+  ): Promise<TickEvent | null> {
+    const player = ctx.player.username;
+    const text = clean(
+      await this.ai.generate(
+        `${postContext(target)}\n\n` +
+          `@${player} הגיב/ה על הפוסט שלך. המשימה: לענות ל-@${player} בתגובה קצרה ` +
+          `שמתחילה ב-@${player}. רק התגובה, משפט אחד. בלי מירכאות.`,
+        { system, maxTokens: 200 },
+      ),
+    );
+    return this.saveComment(plan.character, target, text);
+  }
+
+  private async saveComment(character: Character, target: FeedPost, text: string): Promise<TickEvent | null> {
     // Small models sometimes parrot an existing comment; drop those rather than post a copy.
     if (!text || target.comments.some((c) => c.text === text) || text === target.caption) return null;
-    await this.db.insert(comments).values({ postId: target.id, authorId: character.accountId, text });
 
+    await Promise.all([
+      this.db.insert(comments).values({ postId: target.id, authorId: character.accountId, text }),
+      this.remember(character, `הגבתי לפוסט של ${target.author.username}: ${text}`),
+    ]);
     target.comments.push({ author: character.account, text });
-    await this.remember(character, `הגבתי לפוסט של ${target.author.username}: ${text}`);
     return {
       type: 'comment',
       actor: toUser(character.account),
@@ -229,41 +287,55 @@ export class AgentService {
     };
   }
 
-  private async messagePlayer(
-    ctx: TickContext,
-    character: Character,
-    system: string,
-    history: { from: string; text: string }[],
-    conversationId: string | undefined,
-  ): Promise<TickEvent> {
-    const transcript = history.map((m) => `@${m.from}: ${m.text}`).join('\n');
+  private async messagePlayer(ctx: TickContext, plan: TurnPlan, system: string): Promise<TickEvent> {
+    const player = ctx.player.username;
+    const transcript = plan.dm.history.map((m) => `@${m.from}: ${m.text}`).join('\n');
     const text = clean(
       await this.ai.generate(
         (transcript
-          ? `Your private chat with @${ctx.player.username} so far:\n${transcript}\n\n`
-          : `You are starting a private chat with @${ctx.player.username}.\n\n`) +
-          'Write your next message. Only the message, 1-2 short sentences. No quotation marks.',
+          ? `השיחה הפרטית שלך עם @${player} עד עכשיו:\n${transcript}\n\n`
+          : `מתחילים עכשיו שיחה פרטית עם @${player}.\n\n`) +
+          'המשימה: לכתוב את ההודעה הבאה שלך, כמו בוואטסאפ. רק ההודעה, קצרה. בלי מירכאות.',
         { system, maxTokens: 200 },
       ),
     );
 
-    let id = conversationId;
+    let id = plan.dm.id;
     if (!id) {
       const [row] = await this.db
         .insert(conversations)
-        .values({ worldId: ctx.worldId, agentId: character.accountId })
+        .values({ worldId: ctx.worldId, agentId: plan.character.accountId })
         .returning();
       id = row.id;
     }
-    await this.db.insert(messages).values({ conversationId: id, senderId: character.accountId, text });
-
-    await this.remember(character, `כתבתי ל-${ctx.player.username}: ${text}`);
-    return { type: 'message', actor: toUser(character.account), conversationId: id, text };
+    await Promise.all([
+      this.db.insert(messages).values({ conversationId: id, senderId: plan.character.accountId, text }),
+      this.remember(plan.character, `כתבתי ל-${player}: ${text}`),
+    ]);
+    return { type: 'message', actor: toUser(plan.character.account), conversationId: id, text };
   }
 
   private async remember(character: Character, content: string) {
     await this.db.insert(characterMemories).values({ characterId: character.id, content, importance: 3 });
   }
+}
+
+/** The character's most recent post with a player comment they haven't answered yet. */
+function unansweredPlayerComment(ctx: TickContext, author: Account): FeedPost | undefined {
+  return ctx.feed.find((post) => {
+    if (post.author.id !== author.id) return false;
+    const lastFromPlayer = post.comments.findLastIndex((c) => c.author.id === ctx.player.id);
+    if (lastFromPlayer === -1) return false;
+    return !post.comments.slice(lastFromPlayer + 1).some((c) => c.author.id === author.id);
+  });
+}
+
+function postContext(post: FeedPost) {
+  const thread = post.comments
+    .slice(-COMMENTS_PER_POST)
+    .map((c) => `@${c.author.username}: ${c.text}`)
+    .join('\n');
+  return `פוסט של @${post.author.username}: ${post.caption}` + (thread ? `\nתגובות אחרונות:\n${thread}` : '');
 }
 
 /** Strips model artifacts: leftover <think> blocks and wrapping quotes. */

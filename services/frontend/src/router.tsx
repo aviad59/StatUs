@@ -14,6 +14,9 @@ export const router = createBrowserRouter([
     id: 'root',
     path: '/',
     loader: rootLoader,
+    // The current user doesn't change when you comment, DM or tick; skip reloading it.
+    shouldRevalidate: ({ formMethod, defaultShouldRevalidate }) =>
+      formMethod ? false : defaultShouldRevalidate,
     element: <RootLayout />,
     errorElement: <ErrorPage />,
     hydrateFallbackElement: null,

@@ -42,6 +42,8 @@ export class OllamaProvider implements TextProvider, DecisionProvider {
         stream: false,
         // Reasoning models (qwen3 etc.) otherwise spend most of the time thinking.
         think: false,
+        // Keep the model in GPU memory between ticks; reloading it takes ~30 s.
+        keep_alive: '30m',
         messages: [
           { role: 'system', content: system },
           { role: 'user', content: prompt },

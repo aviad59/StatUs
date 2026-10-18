@@ -13,7 +13,7 @@ import { DECISION_PROVIDER, TEXT_PROVIDER } from './providers/provider';
 const ollama = (config: ConfigService) =>
   new OllamaProvider(
     config.get('OLLAMA_URL', 'http://localhost:11434'),
-    config.get('OLLAMA_MODEL', 'qwen3:8b'),
+    config.get('OLLAMA_MODEL', 'gemma4:12b'),
   );
 
 const anthropic = (config: ConfigService) =>

@@ -2,7 +2,7 @@
 
 React 19 SPA built with Vite, TypeScript, Tailwind CSS v4 and React Router.
 
-Instagram-style app: mobile-first (`max-w-md` column), bottom nav with three tabs: Feed (`/`), Messages (`/messages`, `/messages/:id`) and Profile (`/profile`, later settings). All data comes from the backend API. The user can comment on posts, send DMs, and move the world forward with the "הצעד הבא" (next step) button on the feed, which costs one energy point and lets the agents act. No posting or liking yet.
+Instagram-style app: mobile-first (`max-w-md` column), bottom nav with three tabs: Feed (`/`), Messages (`/messages`, `/messages/:id`) and Profile (`/profile`, later settings). All data comes from the backend API. The user can comment on posts, send DMs, and move the world forward by pulling the feed down (pull-to-refresh, touch or mouse drag), which runs one tick: it costs one energy point and lets the agents act. With no energy, the pull only reloads the feed. No posting or liking yet.
 
 `pnpm dev` needs the backend running (`pnpm dev:backend` from the root); Vite proxies `/api` to http://localhost:3000. If the backend is down, the root error page shows.
 
@@ -21,7 +21,7 @@ From the repo root: `pnpm --filter @status/frontend <script>`.
 - `src/format.ts` — Hebrew time formatting for API timestamps (`timeAgo`, `timeUntil`, `clockTime`)
 - `src/layouts/` — layout components that render `<Outlet />`
 - `src/pages/` — one component per route (`XxxPage.tsx`); `ErrorPage` is the root `errorElement`
-- `src/components/` — reusable UI components (`Avatar`, `BottomNav`, `PostCard`, `StoryBar`, `StoryViewer`, `WorldBar` (energy + next-step button + what happened), `TextForm` (one-line input that submits `text` to an action))
+- `src/components/` — reusable UI components (`Avatar`, `BottomNav`, `PostCard`, `StoryBar`, `StoryViewer`, `PullToRefresh` (Instagram-style pull gesture; `overscroll-behavior-y: contain` in `index.css` disables the browser's own pull-to-reload), `WorldBar` (energy meter + what happened in the last tick), `TextForm` (one-line input that submits `text` to an action))
 - `src/types.ts` — re-exports the API types from `@status/shared`; change types there, not here
 - Demo images come from picsum.photos and avatars from i.pravatar.cc (need internet); the URLs are set by the backend seed
 - `src/index.css` — Tailwind entry (`@import 'tailwindcss'`); there is no `tailwind.config` (v4 is configured in CSS via `@theme`)

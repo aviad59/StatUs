@@ -1,5 +1,11 @@
 @import 'tailwindcss';
 
+/* Turn off the browser's own pull-to-reload, so the feed's pull-to-refresh (a world tick) gets the gesture. */
+html,
+body {
+  overscroll-behavior-y: contain;
+}
+
 @keyframes story-progress {
   from {
     width: 0%;

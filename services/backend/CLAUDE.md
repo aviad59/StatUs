@@ -32,8 +32,8 @@ AI: `pnpm ai:try` builds and runs `src/ai/try.ts`, one `generate()` and one of e
 - `src/feed/` — `GET /api/feed` (posts with comments), `GET /api/stories` (grouped by author), `POST /api/posts/:id/comments` (the user comments)
 - `src/conversations/` — `GET /api/conversations`, `GET /api/conversations/:id`, `POST /api/conversations/:id/messages` (DMs between the user and agents)
 - `src/world/` — the simulation. `GET /api/world` (tick count + energy), `POST /api/world/tick` (advance one step; 409 `NO_ENERGY` / `TICK_IN_PROGRESS`).
-  - `world.service.ts` — runs a tick: takes a per-world lock (`worlds.ticking_since`), gives each character a turn in random order until `TICK_MAX_ACTIONS` actions, checks whether the active story beat is done, then spends 1 energy. Energy is only spent if the tick succeeds; if every turn fails (AI provider down), it returns 503.
-  - `agent.service.ts` — one character's turn: builds the decision state (persona, secrets, memories, relationships, active beat, flags, recent feed, DMs with the player), `decide()`s post / comment / message_player / nothing, `generate()`s the text, saves it and a memory.
+  - `world.service.ts` — runs a tick: takes a per-world lock (`worlds.ticking_since`), then (1) every character plans in parallel, (2) plans run one at a time in random order: replies the player is waiting for (an unanswered DM, or a player comment on the character's own post) always run first and don't count toward `TICK_MAX_ACTIONS`; spontaneous actions fill the rest. Each character acts at most once per tick. Then it checks whether the active story beat is done and spends 1 energy. Energy is only spent if the tick succeeds; if every turn fails (AI provider down), it returns 503.
+  - `agent.service.ts` — `plan()` builds the decision state (persona, secrets, memories, relationships, active beat, flags, recent feed, DMs with the player) and `decide()`s post / comment / message_player / nothing (no message_player when the last DM is already theirs: no double-texting); `act()` `generate()`s the text and saves it plus a memory.
   - `energy.ts` — pure regeneration math (`ENERGY_MAX`, `ENERGY_REGEN_MINUTES`); energy is stored lazily as value + timestamp on `worlds`.
 - `src/common/` — `ZodBodyPipe` (request body validation) and shared zod schemas
 - `src/health/` — `GET /api/health` liveness check
@@ -44,6 +44,7 @@ AI: `pnpm ai:try` builds and runs `src/ai/try.ts`, one `generate()` and one of e
 - Config comes from environment variables via `@nestjs/config` (`ConfigService`), loaded from `services/backend/.env`. Document every new variable in `.env.example`; never commit `.env` or API keys.
 - Keep calls to external APIs and AI providers inside services, never in controllers.
 - All AI calls go through `AiService`, never a provider directly. `generate()` prepends `HEBREW_RULE` to the system prompt. Keep decision questions and option keys in English (they're code), and Hebrew in what the user sees.
+- Generation prompts (system prompt, task instructions, `HEBREW_RULE`) are written in Hebrew, using the infinitive ("לכתוב") so they fit any gender; English instructions made the output read like a translation. Decision questions stay in English.
 - Personas, secrets, memories and beat descriptions are stored in Hebrew. Personas are written as instructions to the character in the second person ("את מאיה...").
 - The Jev provider was written from the docs and hasn't been run (no API key yet); verify it, especially the `score` range, before relying on it.
 - `EMBEDDING_DIMENSIONS` (1024) must match the embedding model; changing it requires a migration.
@@ -53,7 +54,7 @@ AI: `pnpm ai:try` builds and runs `src/ai/try.ts`, one `generate()` and one of e
 - **Scope every query to the current user's world** (`worldId`). Worlds are private; one user must never see another world's rows.
 - Every table enables RLS with no policies (`.enableRLS()` in the schema), which keeps Supabase's public REST API closed. The backend connects as `postgres` and bypasses RLS. Keep this on for new tables.
 - Responses use the types from `@status/shared` (`import type`). Convert `Date` to ISO strings when mapping rows.
-- `CurrentUserService` is a stand-in until Supabase Auth: it returns the oldest human account.
+- `CurrentUserService` is a stand-in until Supabase Auth: it returns the oldest human account, cached for 60 s (each DB round trip to the cloud project costs ~300 ms).
 - Local Supabase ports are 553xx, not the default 543xx, because Windows reserves 54240–54339 on this machine.
 - `experimentalDecorators` and `emitDecoratorMetadata` must stay on in `tsconfig.json`; Nest's dependency injection relies on them.
 - Output is CommonJS (no `"type": "module"`), which is what the Nest CLI expects.

@@ -7,10 +7,21 @@ import {
 } from './providers/provider';
 import type { AnyAnswer, Answer, Question } from './questions';
 
-/** Prepended to every generate() system prompt: all user-facing content is Hebrew. */
-export const HEBREW_RULE =
-  'Write only in natural, everyday Israeli Hebrew, as a real person would on social media. ' +
-  'Never switch to English, except for usernames (which stay in Latin letters) and emoji.';
+/**
+ * Prepended to every generate() system prompt: all user-facing content is Hebrew.
+ * Written in Hebrew, with examples, because English instructions make models write
+ * Hebrew that reads like a translation.
+ */
+export const HEBREW_RULE = `כל מה שכותבים הוא בעברית ישראלית מדוברת, כמו שאנשים אמיתיים כותבים באינסטגרם ובוואטסאפ.
+- קצר וישיר. משפטים קצרים, ולא חייב פיסוק מושלם.
+- סלנג טבעי כשזה מתאים (סבבה, וואלה, חחח, יאללה, אחי, מת/ה על זה), אבל לא בכל משפט.
+- לא לכתוב כמו תרגום מאנגלית ולא כמו עוזר וירטואלי. בלי "אני רואה ש...", "זה נשמע מדהים!", "אני כאן בשבילך", "איך זה גורם לך להרגיש?".
+- לא לחזור על מה שהצד השני אמר, ולא לתאר רגשות בצורה מפורשת מדי.
+- אימוג׳י רק לפעמים, לכל היותר אחד.
+- שמות משתמש נשארים באותיות לטיניות (למשל @maya.cohen).
+
+דוגמאות לטון טבעי: "חחח אל תתחיל", "וואלה? לא ידעתי, מה קרה?", "איזה יופי של תמונה", "יאללה נדבר מחר", "מה נסגר איתך היום"
+דוגמאות למה לא לכתוב: "אני רואה שאת מרגישה עצובה, אני כאן בשבילך!", "זו נשמעת כמו חוויה מדהימה ומעשירה!"`;
 
 export interface GenerateOptions {
   /** Persona / task instructions. HEBREW_RULE is prepended automatically. */

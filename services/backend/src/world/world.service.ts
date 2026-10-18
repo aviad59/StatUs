@@ -89,23 +89,42 @@ export class WorldService {
   }
 
   private async runAgents(world: World, player: Account): Promise<TickEvent[]> {
-    const ctx = await this.loadContext(world, player);
-    const cast = await this.db.query.characters.findMany({
-      where: eq(characters.worldId, world.id),
-      with: { account: true },
-    });
+    const [ctx, cast] = await Promise.all([
+      this.loadContext(world, player),
+      this.db.query.characters.findMany({
+        where: eq(characters.worldId, world.id),
+        with: { account: true },
+      }),
+    ]);
+
+    // One bad model response shouldn't sink the whole tick: log it and move on.
+    let failures = 0;
+    const failed = (character: (typeof cast)[number], error: unknown) => {
+      failures++;
+      this.logger.warn(`Turn failed for ${character.account.username}: ${String(error)}`);
+      return null;
+    };
+
+    // 1. Everyone decides at once (the slow part is the AI and DB round trips).
+    const plans = await Promise.all(
+      cast.map((character) => this.agents.plan(ctx, character).catch((e: unknown) => failed(character, e))),
+    );
+
+    // 2. Act one at a time, so later agents see earlier ones' posts and comments.
+    //    Replies the player is waiting for go first and don't count toward the cap.
+    const ordered = shuffle(plans.filter((p) => p !== null && p.action !== 'nothing'));
+    ordered.sort((a, b) => Number(b!.forced) - Number(a!.forced));
 
     const events: TickEvent[] = [];
-    let failures = 0;
-    for (const character of shuffle(cast)) {
-      if (events.length >= this.maxActionsPerTick) break;
+    let spontaneous = 0;
+    for (const plan of ordered) {
+      if (!plan!.forced && spontaneous >= this.maxActionsPerTick) break;
       try {
-        const event = await this.agents.takeTurn(ctx, character);
+        const event = await this.agents.act(ctx, plan!);
         if (event) events.push(event);
+        if (!plan!.forced) spontaneous++;
       } catch (error) {
-        // One bad model response shouldn't sink the whole tick.
-        failures++;
-        this.logger.warn(`Turn failed for ${character.account.username}: ${String(error)}`);
+        failed(plan!.character, error);
       }
     }
     if (cast.length && failures === cast.length) {
