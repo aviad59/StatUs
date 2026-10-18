@@ -28,7 +28,9 @@ export class AnthropicProvider implements TextProvider, DecisionProvider {
     const response = await this.client.beta.messages.create({
       ...fallback(),
       model: this.model,
-      max_tokens: options.maxTokens ?? 16000,
+      // Not options.maxTokens: thinking tokens count toward max_tokens on current Claude
+      // models, so a small cap cuts the text off mid-word. Length is set by the prompt.
+      max_tokens: 4096,
       // Short creative writing: low effort keeps latency and cost down.
       output_config: { effort: 'low' },
       system: options.system,
@@ -37,6 +39,8 @@ export class AnthropicProvider implements TextProvider, DecisionProvider {
     if (response.stop_reason === 'refusal') {
       throw new Error(`Claude declined to generate (${response.stop_details?.category ?? 'unknown'})`);
     }
+    // Never publish half a sentence.
+    if (response.stop_reason === 'max_tokens') throw new Error('Claude hit max_tokens; text was cut off');
     return response.content
       .flatMap((block) => (block.type === 'text' ? [block.text] : []))
       .join('')
@@ -47,7 +51,7 @@ export class AnthropicProvider implements TextProvider, DecisionProvider {
     const response = await this.client.beta.messages.parse({
       ...fallback(),
       model: this.model,
-      max_tokens: 1024,
+      max_tokens: 4096, // includes thinking; see generate()
       output_config: { effort: 'low', format: betaZodOutputFormat(decisionSchema(question)) },
       system: DECISION_SYSTEM,
       messages: [{ role: 'user', content: decisionPrompt(state, question) }],
