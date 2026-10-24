@@ -1,5 +1,5 @@
 import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import type { Comment, Post, StoryGroup } from '@status/shared';
+import type { Comment, LikeResult, Post, StoryGroup } from '@status/shared';
 import { and, asc, desc, eq } from 'drizzle-orm';
 import { toUser } from '../accounts/to-user';
 import type { Db } from '../db/client';
@@ -7,6 +7,11 @@ import { DB } from '../db/db.module';
 import { type accounts, comments, posts, stories } from '../db/schema';
 
 const FEED_LIMIT = 50;
+
+const likes = (post: typeof posts.$inferSelect): LikeResult => ({
+  likes: post.likeCount + Number(post.playerLiked),
+  liked: post.playerLiked,
+});
 
 @Injectable()
 export class FeedService {
@@ -21,6 +26,17 @@ export class FeedService {
 
     const [row] = await this.db.insert(comments).values({ postId, authorId: me.id, text }).returning();
     return { id: row.id, author: toUser(me), text: row.text, createdAt: row.createdAt.toISOString() };
+  }
+
+  /** The user likes or unlikes a post. */
+  async setLiked(me: typeof accounts.$inferSelect, postId: string, liked: boolean): Promise<LikeResult> {
+    const [post] = await this.db
+      .update(posts)
+      .set({ playerLiked: liked })
+      .where(and(eq(posts.id, postId), eq(posts.worldId, me.worldId)))
+      .returning();
+    if (!post) throw new NotFoundException();
+    return likes(post);
   }
 
   async getPosts(worldId: string): Promise<Post[]> {
@@ -39,7 +55,7 @@ export class FeedService {
       author: toUser(post.author),
       imageUrl: post.imageUrl,
       caption: post.caption,
-      likes: post.likeCount,
+      ...likes(post),
       createdAt: post.createdAt.toISOString(),
       comments: post.comments.map((comment) => ({
         id: comment.id,

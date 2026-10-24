@@ -10,7 +10,11 @@ export function BottomNav() {
   const currentUser = useCurrentUser()
 
   return (
-    <nav className="fixed inset-x-0 bottom-0 z-10 mx-auto flex max-w-md border-t border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950">
+    // Not mirrored, like Instagram's Hebrew UI: home on the left, profile on the right.
+    <nav
+      dir="ltr"
+      className="fixed inset-x-0 bottom-0 z-10 mx-auto flex max-w-md border-t border-neutral-200 bg-white dark:border-neutral-800 dark:bg-neutral-950"
+    >
       <NavLink to="/" end className={linkClass} aria-label="בית">
         <Home size={24} />
       </NavLink>

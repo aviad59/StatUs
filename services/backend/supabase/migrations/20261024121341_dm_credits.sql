@@ -1,0 +1,1 @@
+ALTER TABLE "worlds" ADD COLUMN "dm_credits" integer DEFAULT 0 NOT NULL;

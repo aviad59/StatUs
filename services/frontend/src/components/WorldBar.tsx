@@ -3,14 +3,16 @@ import type { ActionResult } from '@/actions.ts'
 import { timeUntil } from '@/format.ts'
 import type { TickEvent, TickResult, WorldStatus } from '@/types.ts'
 
+// Hebrew verbs agree with the actor's gender (masculine when unknown).
 const describe = (event: TickEvent) => {
+  const female = event.actor.gender === 'female'
   switch (event.type) {
     case 'post':
-      return 'פרסם/ה פוסט'
+      return female ? 'פרסמה פוסט' : 'פרסם פוסט'
     case 'comment':
-      return `הגיב/ה לפוסט של ${event.postAuthor.username}`
+      return `${female ? 'הגיבה' : 'הגיב'} לפוסט של ${event.postAuthor.username}`
     case 'message':
-      return 'שלח/ה לך הודעה'
+      return female ? 'שלחה לך הודעה' : 'שלח לך הודעה'
   }
 }
 

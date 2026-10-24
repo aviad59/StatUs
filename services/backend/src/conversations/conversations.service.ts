@@ -1,10 +1,13 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import type { Conversation, ConversationSummary, Message } from '@status/shared';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
+import type { Conversation, ConversationSummary, Message, TickErrorCode } from '@status/shared';
+import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
 import { toUser } from '../accounts/to-user';
 import type { Db } from '../db/client';
 import { DB } from '../db/db.module';
-import { conversations, messages } from '../db/schema';
+import { type accounts, conversations, messages, worlds } from '../db/schema';
+import { AgentService } from '../world/agent.service';
+import { currentEnergy, energyConfig, type EnergyConfig, spendOne } from '../world/energy';
 
 type Me = { id: string; worldId: string };
 
@@ -17,7 +20,17 @@ const toMessage = (message: typeof messages.$inferSelect, me: Me): Message => ({
 
 @Injectable()
 export class ConversationsService {
-  constructor(@Inject(DB) private readonly db: Db) {}
+  private readonly energy: EnergyConfig;
+  /** Conversations an agent is answering right now, so one DM never gets two replies. */
+  private readonly replying = new Set<string>();
+
+  constructor(
+    @Inject(DB) private readonly db: Db,
+    private readonly agents: AgentService,
+    config: ConfigService,
+  ) {
+    this.energy = energyConfig(config);
+  }
 
   // Most recent activity first.
   async list(me: Me): Promise<ConversationSummary[]> {
@@ -58,17 +71,66 @@ export class ConversationsService {
     };
   }
 
-  /** The user sends a DM. The agent replies on a later tick (if it chooses to). */
+  /**
+   * The user sends a DM. One energy point buys DM_MESSAGES_PER_ENERGY messages; 409
+   * NO_ENERGY when none are left and there's no energy to buy more. The agent's
+   * answer comes from reply().
+   */
   async send(me: Me, id: string, text: string): Promise<Message> {
     const conversation = await this.db.query.conversations.findFirst({
       where: and(eq(conversations.id, id), eq(conversations.worldId, me.worldId)),
     });
     if (!conversation) throw new NotFoundException();
 
+    await this.payForMessage(me.worldId);
     const [row] = await this.db
       .insert(messages)
       .values({ conversationId: id, senderId: me.id, text })
       .returning();
     return toMessage(row, me);
+  }
+
+  /** The agent answers the user's last DM now. Null when there's nothing to answer. */
+  async reply(me: typeof accounts.$inferSelect, id: string): Promise<Message | null> {
+    if (this.replying.has(id)) return null;
+    this.replying.add(id);
+    try {
+      const row = await this.agents.replyInDm(me, id);
+      return row && toMessage(row, me);
+    } finally {
+      this.replying.delete(id);
+    }
+  }
+
+  private async payForMessage(worldId: string): Promise<void> {
+    // A message already paid for?
+    const [prepaid] = await this.db
+      .update(worlds)
+      .set({ dmCredits: sql`${worlds.dmCredits} - 1` })
+      .where(and(eq(worlds.id, worldId), gt(worlds.dmCredits, 0)))
+      .returning({ id: worlds.id });
+    if (prepaid) return;
+
+    // Otherwise spend one energy point on a new batch; this message is its first.
+    const world = await this.db.query.worlds.findFirst({ where: eq(worlds.id, worldId) });
+    if (!world) throw new NotFoundException();
+    if (currentEnergy(world, this.energy).current < 1) {
+      const code: TickErrorCode = 'NO_ENERGY';
+      throw new ConflictException({ code, message: 'Out of energy. Wait for it to regenerate.' });
+    }
+    // Only if the stored energy hasn't changed since we read it (a tick or another
+    // message may have spent it); otherwise try again from the top.
+    const [bought] = await this.db
+      .update(worlds)
+      .set({ ...spendOne(world, this.energy), dmCredits: this.energy.dmMessages - 1 })
+      .where(
+        and(
+          eq(worlds.id, worldId),
+          eq(worlds.energy, world.energy),
+          eq(worlds.energyUpdatedAt, world.energyUpdatedAt),
+        ),
+      )
+      .returning({ id: worlds.id });
+    if (!bought) return this.payForMessage(worldId);
   }
 }

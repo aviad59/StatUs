@@ -13,7 +13,7 @@ import type { Db } from '../db/client';
 import { DB } from '../db/db.module';
 import { accounts, characters, comments, posts, storyBeats, storyFlags, worlds } from '../db/schema';
 import { AgentService, type TickContext } from './agent.service';
-import { currentEnergy, type EnergyConfig, spendOne } from './energy';
+import { currentEnergy, energyConfig, type EnergyConfig, spendOne } from './energy';
 
 type World = typeof worlds.$inferSelect;
 type Account = typeof accounts.$inferSelect;
@@ -38,10 +38,7 @@ export class WorldService {
     private readonly ai: AiService,
     config: ConfigService,
   ) {
-    this.energy = {
-      max: Number(config.get('ENERGY_MAX', 5)),
-      regenMinutes: Number(config.get('ENERGY_REGEN_MINUTES', 30)),
-    };
+    this.energy = energyConfig(config);
     this.maxActionsPerTick = Number(config.get('TICK_MAX_ACTIONS', 3));
   }
 
@@ -207,7 +204,11 @@ export class WorldService {
   }
 
   private toStatus(world: World): WorldStatus {
-    return { tick: world.tick, energy: currentEnergy(world, this.energy) };
+    return {
+      tick: world.tick,
+      energy: currentEnergy(world, this.energy),
+      dm: { messagesLeft: world.dmCredits, perEnergy: this.energy.dmMessages },
+    };
   }
 }
 

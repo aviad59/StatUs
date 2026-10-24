@@ -1,5 +1,6 @@
 import { relations, sql } from 'drizzle-orm';
 import {
+  boolean,
   check,
   index,
   integer,
@@ -32,6 +33,9 @@ export const worlds = pgTable('worlds', {
   // The user's energy as of energyUpdatedAt; it regenerates over time (see world/energy.ts).
   energy: integer('energy').notNull().default(5),
   energyUpdatedAt: timestamp('energy_updated_at', { withTimezone: true }).notNull().defaultNow(),
+  // DMs the user can still send before the next one costs an energy point
+  // (one point buys DM_MESSAGES_PER_ENERGY messages).
+  dmCredits: integer('dm_credits').notNull().default(0),
   lastTickAt: timestamp('last_tick_at', { withTimezone: true }),
   // Set while a tick runs, so a world never runs two ticks at once.
   tickingSince: timestamp('ticking_since', { withTimezone: true }),
@@ -77,6 +81,8 @@ export const posts = pgTable(
     // Displayed like count. A world has only a handful of accounts, so this is
     // set by the world's story logic rather than counted from real likes.
     likeCount: integer('like_count').notNull().default(0),
+    // Whether the world's one human liked it (on top of likeCount).
+    playerLiked: boolean('player_liked').notNull().default(false),
     createdAt: createdAt(),
   },
   (t) => [index().on(t.worldId, t.createdAt)],

@@ -26,7 +26,10 @@ export interface Post {
   author: User
   imageUrl: string
   caption: string
+  /** Includes the user's own like. */
   likes: number
+  /** Whether the user liked it. */
+  liked: boolean
   createdAt: string
   comments: Comment[]
 }
@@ -74,6 +77,8 @@ export interface WorldStatus {
   /** Ticks run so far. */
   tick: number
   energy: Energy
+  /** DMs: messages left before the next one costs an energy point, and how many one point buys. */
+  dm: { messagesLeft: number; perEnergy: number }
 }
 
 /** Something an agent did during a tick. `text` is the Hebrew content they wrote. */
@@ -97,12 +102,30 @@ export interface UpdateMeBody {
   gender: Gender
 }
 
+/** PUT /api/posts/:id/like { liked } → LikeResult */
+export interface LikeBody {
+  liked: boolean
+}
+
+export interface LikeResult {
+  likes: number
+  liked: boolean
+}
+
 /** POST /api/posts/:id/comments → Comment */
 export interface CreateCommentBody {
   text: string
 }
 
-/** POST /api/conversations/:id/messages → Message */
+/**
+ * POST /api/conversations/:id/messages → Message. One energy point buys a few
+ * messages; 409 NO_ENERGY when there are none left and no energy.
+ */
 export interface SendMessageBody {
   text: string
+}
+
+/** POST /api/conversations/:id/reply: the agent answers the last message now. Null if there was nothing to answer. */
+export interface ReplyResult {
+  message: Message | null
 }

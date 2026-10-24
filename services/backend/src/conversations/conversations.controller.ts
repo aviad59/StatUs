@@ -1,5 +1,5 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post } from '@nestjs/common';
-import type { Conversation, ConversationSummary, Message, SendMessageBody } from '@status/shared';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import type { Conversation, ConversationSummary, Message, ReplyResult, SendMessageBody } from '@status/shared';
 import { CurrentUserService } from '../accounts/current-user.service';
 import { textBody } from '../common/schemas';
 import { ZodBodyPipe } from '../common/zod-body.pipe';
@@ -28,5 +28,12 @@ export class ConversationsController {
     @Body(new ZodBodyPipe(textBody)) body: SendMessageBody,
   ): Promise<Message> {
     return this.conversations.send(await this.currentUser.get(), id, body.text);
+  }
+
+  /** The agent answers the user's last message now (an AI call, a few seconds). */
+  @Post(':id/reply')
+  @HttpCode(200)
+  async reply(@Param('id', ParseUUIDPipe) id: string): Promise<ReplyResult> {
+    return { message: await this.conversations.reply(await this.currentUser.get(), id) };
   }
 }

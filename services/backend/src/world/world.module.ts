@@ -8,5 +8,6 @@ import { WorldService } from './world.service';
   imports: [AccountsModule],
   controllers: [WorldController],
   providers: [WorldService, AgentService],
+  exports: [AgentService],
 })
 export class WorldModule {}

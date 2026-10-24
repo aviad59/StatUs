@@ -3,12 +3,15 @@
 // energy and DMs refresh on their own.
 
 import { type ActionFunctionArgs, useFetchers } from 'react-router'
-import { ApiError, patch, post } from '@/api.ts'
+import { ApiError, patch, post, put } from '@/api.ts'
 import type {
   Comment,
   CreateCommentBody,
   Gender,
+  LikeBody,
+  LikeResult,
   Message,
+  ReplyResult,
   SendMessageBody,
   TickErrorCode,
   TickResult,
@@ -53,6 +56,16 @@ export async function tickAction({ request }: ActionFunctionArgs): Promise<Actio
   }
 }
 
+/** Likes or unlikes a post; the form sends `liked` as "true" or "false". */
+export async function likeAction({ params, request }: ActionFunctionArgs): Promise<ActionResult<LikeResult>> {
+  const body: LikeBody = { liked: (await request.formData()).get('liked') === 'true' }
+  try {
+    return { ok: true, data: await put<LikeResult>(`/posts/${params.id}/like`, body) }
+  } catch (error) {
+    return failure(error, 'לא הצלחנו לעדכן את הלייק')
+  }
+}
+
 export async function commentAction({
   params,
   request,
@@ -76,6 +89,22 @@ export async function sendMessageAction({
     return { ok: true, data: await post<Message>(`/conversations/${params.id}/messages`, body) }
   } catch (error) {
     return failure(error, 'לא הצלחנו לשלוח את ההודעה')
+  }
+}
+
+// Never answer faster than this, so the "typing..." bubble has time to show.
+const MIN_REPLY_MS = 3000
+
+/** Asks the agent to answer the last DM now (see ConversationPage for the online/typing states). */
+export async function replyAction({ params, request }: ActionFunctionArgs): Promise<ActionResult<ReplyResult>> {
+  try {
+    const [data] = await Promise.all([
+      post<ReplyResult>(`/conversations/${params.id}/reply`, undefined, request.signal),
+      new Promise((resolve) => setTimeout(resolve, MIN_REPLY_MS)),
+    ])
+    return { ok: true, data }
+  } catch (error) {
+    return failure(error, 'לא הצלחנו לקבל תשובה')
   }
 }
 

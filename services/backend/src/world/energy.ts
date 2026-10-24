@@ -1,12 +1,15 @@
 // Energy regenerates lazily: we store a value and when it was set, and compute the
 // current amount from the time that has passed. Pure functions, no DB access.
 
+import type { ConfigService } from '@nestjs/config';
 import type { Energy } from '@status/shared';
 
 export interface EnergyConfig {
   max: number;
   /** Minutes to regenerate one point. */
   regenMinutes: number;
+  /** DMs one point buys. */
+  dmMessages: number;
 }
 
 export interface StoredEnergy {
@@ -15,6 +18,14 @@ export interface StoredEnergy {
 }
 
 const MINUTE = 60_000;
+
+export function energyConfig(config: ConfigService): EnergyConfig {
+  return {
+    max: Number(config.get('ENERGY_MAX', 5)),
+    regenMinutes: Number(config.get('ENERGY_REGEN_MINUTES', 30)),
+    dmMessages: Math.max(1, Number(config.get('DM_MESSAGES_PER_ENERGY', 5))),
+  };
+}
 
 function regenerated(stored: StoredEnergy, config: EnergyConfig, now: Date) {
   const regenMs = config.regenMinutes * MINUTE;

@@ -7,14 +7,14 @@ import type { Db } from '../db/client';
 import { DB } from '../db/db.module';
 import {
   characterMemories,
-  type characters,
+  characters,
   comments,
   conversations,
   messages,
   posts,
   relationships,
   type accounts,
-  type storyBeats,
+  storyBeats,
 } from '../db/schema';
 
 type Account = typeof accounts.$inferSelect;
@@ -180,7 +180,7 @@ export class AgentService {
   // Prompts are in Hebrew on purpose: English instructions make the model "think" in
   // English and the Hebrew comes out sounding translated. Task instructions use the
   // infinitive ("לכתוב"); gender is stated explicitly (see selfGender / addressAs).
-  private systemPrompt(ctx: TickContext, character: Character, memories: string[]) {
+  private systemPrompt(ctx: Pick<TickContext, 'activeBeat'>, character: Character, memories: string[]) {
     const lines = [
       character.persona,
       '',
@@ -293,7 +293,52 @@ export class AgentService {
     };
   }
 
+  /**
+   * Answers the player's DM right away, outside a tick. Returns the saved reply, or
+   * null when the last message isn't the player's (nothing to answer).
+   */
+  async replyInDm(player: Account, conversationId: string) {
+    const conversation = await this.db.query.conversations.findFirst({
+      where: and(eq(conversations.id, conversationId), eq(conversations.worldId, player.worldId)),
+      with: { messages: { orderBy: desc(messages.createdAt), limit: DM_HISTORY } },
+    });
+    if (!conversation || conversation.messages[0]?.senderId !== player.id) return null;
+
+    const [character, activeBeat] = await Promise.all([
+      this.db.query.characters.findFirst({
+        where: eq(characters.accountId, conversation.agentId),
+        with: {
+          account: true,
+          memories: { orderBy: desc(characterMemories.createdAt), limit: MEMORIES_IN_STATE },
+        },
+      }),
+      this.db.query.storyBeats.findFirst({
+        where: and(eq(storyBeats.worldId, player.worldId), eq(storyBeats.status, 'active')),
+      }),
+    ]);
+    if (!character) return null;
+
+    const history = conversation.messages.toReversed().map((m) => ({
+      from: m.senderId === player.id ? player.username : character.account.username,
+      text: m.text,
+    }));
+    const ctx = { worldId: player.worldId, player, activeBeat: activeBeat ?? null };
+    const system = this.systemPrompt(ctx, character, character.memories.map((m) => m.content));
+    const { row } = await this.writeDm(ctx, { character, dm: { id: conversation.id, history } }, system);
+    return row;
+  }
+
   private async messagePlayer(ctx: TickContext, plan: TurnPlan, system: string): Promise<TickEvent> {
+    const { id, text } = await this.writeDm(ctx, plan, system);
+    return { type: 'message', actor: toUser(plan.character.account), conversationId: id, text };
+  }
+
+  /** Writes the character's next DM to the player and saves it, opening the conversation if needed. */
+  private async writeDm(
+    ctx: Pick<TickContext, 'worldId' | 'player'>,
+    plan: Pick<TurnPlan, 'character' | 'dm'>,
+    system: string,
+  ) {
     const player = ctx.player.username;
     const transcript = plan.dm.history.map((m) => `@${m.from}: ${m.text}`).join('\n');
     const text = clean(
@@ -315,11 +360,14 @@ export class AgentService {
         .returning();
       id = row.id;
     }
-    await Promise.all([
-      this.db.insert(messages).values({ conversationId: id, senderId: plan.character.accountId, text }),
+    const [[row]] = await Promise.all([
+      this.db
+        .insert(messages)
+        .values({ conversationId: id, senderId: plan.character.accountId, text })
+        .returning(),
       this.remember(plan.character, `כתבתי ל-${player}: ${text}`),
     ]);
-    return { type: 'message', actor: toUser(plan.character.account), conversationId: id, text };
+    return { id, text, row };
   }
 
   private async remember(character: Character, content: string) {

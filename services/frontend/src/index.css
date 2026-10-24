@@ -1,9 +1,31 @@
 @import 'tailwindcss';
 
-/* Turn off the browser's own pull-to-reload, so the feed's pull-to-refresh (a world tick) gets the gesture. */
+/* Turn off the browser's own gestures, pull-to-reload (the feed's pull-to-refresh, a world tick, gets it) and swiping sideways to go back or forward a page. */
 html,
 body {
-  overscroll-behavior-y: contain;
+  overscroll-behavior: contain;
+}
+
+/* The big heart that pops over a post when you double-tap it. */
+@keyframes like-burst {
+  0% {
+    opacity: 0;
+    transform: scale(0.3);
+  }
+  15% {
+    opacity: 1;
+    transform: scale(1.15);
+  }
+  30% {
+    transform: scale(1);
+  }
+  70% {
+    opacity: 1;
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1);
+  }
 }
 
 @keyframes story-progress {

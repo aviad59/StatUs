@@ -1,0 +1,1 @@
+ALTER TABLE "posts" ADD COLUMN "player_liked" boolean DEFAULT false NOT NULL;

@@ -22,7 +22,7 @@ export async function api<T>(path: string, init?: RequestInit): Promise<T> {
 }
 
 const send =
-  (method: 'POST' | 'PATCH') =>
+  (method: 'POST' | 'PATCH' | 'PUT') =>
   <T>(path: string, body?: unknown, signal?: AbortSignal) =>
     api<T>(path, {
       method,
@@ -33,3 +33,4 @@ const send =
 
 export const post = send('POST')
 export const patch = send('PATCH')
+export const put = send('PUT')

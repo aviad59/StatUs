@@ -1,13 +1,25 @@
-import { createBrowserRouter } from 'react-router'
-import { commentAction, sendMessageAction, tickAction, updateProfileAction } from './actions.ts'
+import { type ActionFunctionArgs, createBrowserRouter } from 'react-router'
+import { commentAction, likeAction, replyAction, sendMessageAction, tickAction, updateProfileAction } from './actions.ts'
 import { RootLayout } from './layouts/RootLayout.tsx'
-import { conversationLoader, feedLoader, messagesLoader, rootLoader } from './loaders.ts'
+import { clearCache, conversationLoader, feedLoader, messagesLoader, rootLoader } from './loaders.ts'
 import { ConversationPage } from './pages/ConversationPage.tsx'
 import { ErrorPage } from './pages/ErrorPage.tsx'
 import { FeedPage } from './pages/FeedPage.tsx'
 import { MessagesPage } from './pages/MessagesPage.tsx'
 import { NotFoundPage } from './pages/NotFoundPage.tsx'
 import { ProfilePage } from './pages/ProfilePage.tsx'
+
+// Every action can change what the pages show, so the loaders' cache is dropped
+// before React Router reloads them.
+const fresh =
+  <T,>(action: (args: ActionFunctionArgs) => Promise<T>) =>
+  async (args: ActionFunctionArgs) => {
+    try {
+      return await action(args)
+    } finally {
+      clearCache()
+    }
+  }
 
 export const router = createBrowserRouter([
   {
@@ -27,13 +39,15 @@ export const router = createBrowserRouter([
       {
         path: 'messages/:id',
         loader: conversationLoader,
-        action: sendMessageAction,
+        action: fresh(sendMessageAction),
         element: <ConversationPage />,
       },
-      { path: 'profile', action: updateProfileAction, element: <ProfilePage /> },
+      { path: 'profile', action: fresh(updateProfileAction), element: <ProfilePage /> },
       // Action-only routes (no UI), submitted to with useFetcher().
-      { path: 'actions/tick', action: tickAction },
-      { path: 'actions/posts/:id/comments', action: commentAction },
+      { path: 'actions/tick', action: fresh(tickAction) },
+      { path: 'actions/posts/:id/comments', action: fresh(commentAction) },
+      { path: 'actions/posts/:id/like', action: fresh(likeAction) },
+      { path: 'actions/conversations/:id/reply', action: fresh(replyAction) },
       { path: '*', element: <NotFoundPage /> },
     ],
   },
