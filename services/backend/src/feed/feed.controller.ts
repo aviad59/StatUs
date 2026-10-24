@@ -1,9 +1,31 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post as HttpPost, Put } from '@nestjs/common';
-import type { Comment, CreateCommentBody, LikeBody, LikeResult, Post, StoryGroup } from '@status/shared';
+import {
+  Body,
+  Controller,
+  Get,
+  Post as HttpPost,
+  Param,
+  ParseUUIDPipe,
+  Put,
+  UploadedFile,
+  UseInterceptors,
+} from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
+import type {
+  Comment,
+  CreateCommentBody,
+  CreatePostBody,
+  LikeBody,
+  LikeResult,
+  Post,
+  StoryGroup,
+} from '@status/shared';
 import { CurrentUserService } from '../accounts/current-user.service';
-import { likeBody, textBody } from '../common/schemas';
+import { createPostBody, likeBody, textBody } from '../common/schemas';
 import { ZodBodyPipe } from '../common/zod-body.pipe';
-import { FeedService } from './feed.service';
+import { FeedService, type UploadedImage } from './feed.service';
+
+// Phones resize photos before uploading (see NewPostPage), so real uploads are far smaller.
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024;
 
 @Controller()
 export class FeedController {
@@ -16,6 +38,23 @@ export class FeedController {
   async getPosts(): Promise<Post[]> {
     const me = await this.currentUser.get();
     return this.feed.getPosts(me.worldId);
+  }
+
+  /** The current user's own posts (their profile grid). */
+  @Get('me/posts')
+  async getMyPosts(): Promise<Post[]> {
+    const me = await this.currentUser.get();
+    return this.feed.getPosts(me.worldId, me.id);
+  }
+
+  /** multipart/form-data: `image` (JPEG, PNG or WebP) and `caption`. */
+  @HttpPost('posts')
+  @UseInterceptors(FileInterceptor('image', { limits: { fileSize: MAX_UPLOAD_BYTES } }))
+  async createPost(
+    @UploadedFile() image: UploadedImage | undefined,
+    @Body(new ZodBodyPipe(createPostBody)) body: CreatePostBody,
+  ): Promise<Post> {
+    return this.feed.createPost(await this.currentUser.get(), image, body.caption);
   }
 
   @Get('stories')

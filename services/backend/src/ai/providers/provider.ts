@@ -1,9 +1,17 @@
 import type { AnyAnswer, Question } from '../questions';
 
+/** An image sent along with a prompt (the model looks at it). */
+export interface ImageInput {
+  /** Base64, no data: prefix. */
+  data: string;
+  mediaType: 'image/jpeg' | 'image/png' | 'image/webp';
+}
+
 export interface GenerateOptions {
   system: string;
   temperature?: number;
   maxTokens?: number;
+  images?: ImageInput[];
 }
 
 /** Free-form text generation (posts, comments, DMs). */

@@ -102,6 +102,14 @@ export interface UpdateMeBody {
   gender: Gender
 }
 
+/**
+ * POST /api/posts → Post. Sent as multipart/form-data with the photo as `image`
+ * (JPEG, PNG or WebP, at most 10 MB) next to these fields.
+ */
+export interface CreatePostBody {
+  caption: string
+}
+
 /** PUT /api/posts/:id/like { liked } → LikeResult */
 export interface LikeBody {
   liked: boolean

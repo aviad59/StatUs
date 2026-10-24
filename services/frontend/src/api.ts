@@ -34,3 +34,7 @@ const send =
 export const post = send('POST')
 export const patch = send('PATCH')
 export const put = send('PUT')
+
+/** POST multipart/form-data (file uploads). The browser sets the Content-Type boundary. */
+export const postForm = <T>(path: string, body: FormData, signal?: AbortSignal) =>
+  api<T>(path, { method: 'POST', body, signal })

@@ -34,7 +34,18 @@ export class AnthropicProvider implements TextProvider, DecisionProvider {
       // Short creative writing: low effort keeps latency and cost down.
       output_config: { effort: 'low' },
       system: options.system,
-      messages: [{ role: 'user', content: prompt }],
+      messages: [
+        {
+          role: 'user',
+          content: [
+            ...(options.images ?? []).map((image) => ({
+              type: 'image' as const,
+              source: { type: 'base64' as const, media_type: image.mediaType, data: image.data },
+            })),
+            { type: 'text' as const, text: prompt },
+          ],
+        },
+      ],
     });
     if (response.stop_reason === 'refusal') {
       throw new Error(`Claude declined to generate (${response.stop_details?.category ?? 'unknown'})`);

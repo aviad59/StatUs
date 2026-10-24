@@ -158,6 +158,7 @@ export class WorldService {
         id: p.id,
         author: p.author,
         caption: p.caption,
+        imageDescription: p.imageDescription,
         createdAt: p.createdAt,
         comments: p.comments.map((c) => ({ author: c.author, text: c.text })),
       })),

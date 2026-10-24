@@ -22,6 +22,7 @@
     "@nestjs/core": "^12.1.2",
     "@nestjs/platform-express": "^12.1.2",
     "@status/shared": "workspace:*",
+    "@supabase/supabase-js": "^2.118.0",
     "drizzle-orm": "^0.45.4",
     "postgres": "^3.4.9",
     "reflect-metadata": "^0.2.2",

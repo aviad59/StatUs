@@ -6,6 +6,7 @@ import { ConversationsModule } from './conversations/conversations.module';
 import { DbModule } from './db/db.module';
 import { FeedModule } from './feed/feed.module';
 import { HealthModule } from './health/health.module';
+import { StorageModule } from './storage/storage.module';
 import { WorldModule } from './world/world.module';
 
 @Module({
@@ -13,6 +14,7 @@ import { WorldModule } from './world/world.module';
     ConfigModule.forRoot({ isGlobal: true }),
     DbModule,
     AiModule,
+    StorageModule,
     HealthModule,
     AccountsModule,
     FeedModule,

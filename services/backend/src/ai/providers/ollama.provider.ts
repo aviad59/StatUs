@@ -19,9 +19,12 @@ export class OllamaProvider implements TextProvider, DecisionProvider {
   }
 
   generate(prompt: string, options: GenerateOptions): Promise<string> {
-    return this.chat(options.system, prompt, {
-      options: { temperature: options.temperature, num_predict: options.maxTokens },
-    });
+    return this.chat(
+      options.system,
+      prompt,
+      { options: { temperature: options.temperature, num_predict: options.maxTokens } },
+      options.images?.map((image) => image.data),
+    );
   }
 
   async decide(state: unknown, question: Question): Promise<AnyAnswer> {
@@ -33,7 +36,8 @@ export class OllamaProvider implements TextProvider, DecisionProvider {
     return toAnswer(question, schema.parse(JSON.parse(content)));
   }
 
-  private async chat(system: string, prompt: string, extra: Record<string, unknown>) {
+  // `images` (base64) only work with vision models, such as gemma4.
+  private async chat(system: string, prompt: string, extra: Record<string, unknown>, images?: string[]) {
     const response = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -46,7 +50,7 @@ export class OllamaProvider implements TextProvider, DecisionProvider {
         keep_alive: '30m',
         messages: [
           { role: 'system', content: system },
-          { role: 'user', content: prompt },
+          { role: 'user', content: prompt, images },
         ],
         ...extra,
       }),

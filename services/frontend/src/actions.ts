@@ -2,8 +2,8 @@
 // After an action finishes, React Router reloads the page's loaders, so the feed,
 // energy and DMs refresh on their own.
 
-import { type ActionFunctionArgs, useFetchers } from 'react-router'
-import { ApiError, patch, post, put } from '@/api.ts'
+import { type ActionFunctionArgs, redirect, useFetchers } from 'react-router'
+import { ApiError, patch, post, postForm, put } from '@/api.ts'
 import type {
   Comment,
   CreateCommentBody,
@@ -11,6 +11,7 @@ import type {
   LikeBody,
   LikeResult,
   Message,
+  Post,
   ReplyResult,
   SendMessageBody,
   TickErrorCode,
@@ -54,6 +55,18 @@ export async function tickAction({ request }: ActionFunctionArgs): Promise<Actio
   } catch (error) {
     return failure(error, 'משהו השתבש בהתקדמות העולם. נסו שוב.')
   }
+}
+
+/** Shares a new post: the form has `image` (already resized, see image.ts) and `caption`. Goes to the feed. */
+export async function createPostAction({ request }: ActionFunctionArgs) {
+  const form = await request.formData()
+  if (!(form.get('image') instanceof Blob)) return { ok: false, error: 'צריך לבחור תמונה' } as const
+  try {
+    await postForm<Post>('/posts', form, request.signal)
+  } catch (error) {
+    return failure(error, 'לא הצלחנו לשתף את הפוסט. נסו שוב.')
+  }
+  return redirect('/')
 }
 
 /** Likes or unlikes a post; the form sends `liked` as "true" or "false". */

@@ -1,11 +1,12 @@
 import { type ActionFunctionArgs, createBrowserRouter } from 'react-router'
-import { commentAction, likeAction, replyAction, sendMessageAction, tickAction, updateProfileAction } from './actions.ts'
+import { commentAction, createPostAction, likeAction, replyAction, sendMessageAction, tickAction, updateProfileAction } from './actions.ts'
 import { RootLayout } from './layouts/RootLayout.tsx'
-import { clearCache, conversationLoader, feedLoader, messagesLoader, rootLoader } from './loaders.ts'
+import { clearCache, conversationLoader, feedLoader, messagesLoader, profileLoader, rootLoader } from './loaders.ts'
 import { ConversationPage } from './pages/ConversationPage.tsx'
 import { ErrorPage } from './pages/ErrorPage.tsx'
 import { FeedPage } from './pages/FeedPage.tsx'
 import { MessagesPage } from './pages/MessagesPage.tsx'
+import { NewPostPage } from './pages/NewPostPage.tsx'
 import { NotFoundPage } from './pages/NotFoundPage.tsx'
 import { ProfilePage } from './pages/ProfilePage.tsx'
 
@@ -42,7 +43,8 @@ export const router = createBrowserRouter([
         action: fresh(sendMessageAction),
         element: <ConversationPage />,
       },
-      { path: 'profile', action: fresh(updateProfileAction), element: <ProfilePage /> },
+      { path: 'new', action: fresh(createPostAction), element: <NewPostPage /> },
+      { path: 'profile', loader: profileLoader, action: fresh(updateProfileAction), element: <ProfilePage /> },
       // Action-only routes (no UI), submitted to with useFetcher().
       { path: 'actions/tick', action: fresh(tickAction) },
       { path: 'actions/posts/:id/comments', action: fresh(commentAction) },

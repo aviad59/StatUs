@@ -1,6 +1,6 @@
 import { Inject, Injectable } from '@nestjs/common';
 import type { TickEvent } from '@status/shared';
-import { and, desc, eq } from 'drizzle-orm';
+import { and, desc, eq, sql } from 'drizzle-orm';
 import { toUser } from '../accounts/to-user';
 import { AiService } from '../ai/ai.service';
 import type { Db } from '../db/client';
@@ -24,6 +24,8 @@ export interface FeedPost {
   id: string;
   author: Account;
   caption: string;
+  /** What the photo shows (set for the user's uploads; see FeedService.createPost). */
+  imageDescription: string | null;
   createdAt: Date;
   comments: { author: Account; text: string }[];
 }
@@ -40,7 +42,7 @@ export interface TickContext {
   flags: Record<string, unknown>;
 }
 
-type SpontaneousAction = 'post' | 'comment' | 'message_player' | 'nothing';
+type SpontaneousAction = 'post' | 'comment' | 'comment_on_player_post' | 'message_player' | 'nothing';
 type Action = SpontaneousAction | 'reply_to_player_comment';
 
 /** What one character will do this tick, decided before anyone acts. */
@@ -69,6 +71,16 @@ const photo = (seed: string) => `https://picsum.photos/seed/${seed}/600/600`;
 // Lower than the usual default (~0.8): small models produce broken Hebrew (dropped
 // letters, made-up words) noticeably more often at high temperature.
 const SHORT_TEXT = { temperature: 0.6, maxTokens: 200 };
+
+// Real Instagram comments are a quick reaction, not a review of the photo. Without
+// this, models recite the photo description and squeeze in the persona's hobby.
+const COMMENT_TASK = `המשימה: לכתוב תגובה לפוסט הזה, כמו תגובה אמיתית של חבר באינסטגרם.
+- קצרה מאוד: 2 עד 8 מילים. תגובה ותחושה, לא תיאור.
+- לא לפרט מה רואים בתמונה. התיאור שלה נועד רק כדי להבין על מה הפוסט; לכל היותר להזכיר פרט אחד, ורק אם הוא באמת בולט.
+- לא משחקי מילים ולא בדיחות על התחביב או העבודה שלך, אלא אם הפוסט באמת קשור לזה.
+- לא לחזור על מה שאחרים כבר כתבו בתגובות, גם לא באותו רעיון.
+דוגמאות לטון (לפי הקול שלך, ראו למעלה): "וואו איזה כיף", "איפה זה??", "חחח אתם לא נורמליים", "איזו תמונה"
+רק התגובה, בלי מירכאות.`;
 
 @Injectable()
 export class AgentService {
@@ -134,6 +146,7 @@ export class AgentService {
       feed: feed.map((p) => ({
         author: p.author.username,
         caption: p.caption,
+        photo: p.imageDescription ?? undefined,
         minutesAgo: Math.round((Date.now() - p.createdAt.getTime()) / 60_000),
         latestComments: p.comments.slice(-COMMENTS_PER_POST).map((c) => `${c.author.username}: ${c.text}`),
       })),
@@ -145,6 +158,10 @@ export class AgentService {
       comment: 'Comment on one of the posts in the feed',
       nothing: 'Do nothing this time',
     };
+    // The player posted something this character hasn't reacted to: friends usually do.
+    if (newPlayerPost(ctx, me)) {
+      options.comment_on_player_post = `Comment on ${ctx.player.username}'s new post (friends usually react to it)`;
+    }
     // No double-texting: if the last DM is theirs, they wait for the player to answer.
     if (history.at(-1)?.from !== me.username) {
       options.message_player = `Send ${ctx.player.username} a private message`;
@@ -168,6 +185,8 @@ export class AgentService {
         return this.post(ctx, plan.character, system);
       case 'comment':
         return this.comment(ctx, plan, system);
+      case 'comment_on_player_post':
+        return this.commentOnPlayerPost(ctx, plan, system);
       case 'reply_to_player_comment':
         return plan.repliedPost ? this.replyToPlayer(ctx, plan, plan.repliedPost, system) : null;
       case 'message_player':
@@ -226,7 +245,14 @@ export class AgentService {
       })
       .returning();
 
-    ctx.feed.unshift({ id: row.id, author: character.account, caption, createdAt: row.createdAt, comments: [] });
+    ctx.feed.unshift({
+      id: row.id,
+      author: character.account,
+      caption,
+      imageDescription: null,
+      createdAt: row.createdAt,
+      comments: [],
+    });
     await this.remember(character, `פרסמתי פוסט: ${caption}`);
     return { type: 'post', actor: toUser(character.account), postId: row.id, text: caption };
   }
@@ -245,12 +271,27 @@ export class AgentService {
       ),
     });
     const target = feed[Number(choice.slice(1))];
-    if (!target) return null;
+    return target ? this.commentOn(target, plan, system) : null;
+  }
 
+  /** Comments on (and likes) the player's newest post this character hasn't reacted to. */
+  private async commentOnPlayerPost(ctx: TickContext, plan: TurnPlan, system: string) {
+    const target = newPlayerPost(ctx, plan.character.account);
+    if (!target) return null;
+    const event = await this.commentOn(target, plan, system);
+    if (event) {
+      await this.db
+        .update(posts)
+        .set({ likeCount: sql`${posts.likeCount} + 1` })
+        .where(eq(posts.id, target.id));
+    }
+    return event;
+  }
+
+  private async commentOn(target: FeedPost, plan: TurnPlan, system: string): Promise<TickEvent | null> {
     const text = clean(
       await this.ai.generate(
-        `${postContext(target)}\n${addressAs(target.author)}\n\n` +
-          'המשימה: לכתוב תגובה לפוסט הזה. רק התגובה, משפט קצר אחד. בלי מירכאות.',
+        `${postContext(target)}\n${addressAs(target.author)}\n\n` + COMMENT_TASK,
         { system, ...SHORT_TEXT },
       ),
     );
@@ -379,9 +420,20 @@ export class AgentService {
 function selfGender(account: Account): string {
   switch (account.gender) {
     case 'female':
-      return 'את אישה: לכתוב על עצמך תמיד בלשון נקבה (למשל: "אני עייפה", "הייתי בטוחה", "אני מתה על זה").';
+      return [
+        'את אישה: לכתוב על עצמך תמיד בלשון נקבה (למשל: "אני עייפה", "הייתי בטוחה", "אני מתה על זה").',
+        'לכתוב כמו בחורה ישראלית ברשתות, בסגנון שלך לפי האופי שלך: חמה וישירה. ' +
+          'מילים שבחורות משתמשות בהן (מאגר לבחירה, לא תבנית: לא להעתיק ולא לפתוח כל פעם באותה מילה): ' +
+          'וואי, כפרה, מושלם, מתה, אוהבת, יפים, חמודים, איזה כיף, אותיות שחוזרות ("וואייי"), ❤️ 😍 🥹 😂.',
+        'בלי סלנג של בנים: לא "אחי", "אש עליכם", "חזק על זה", "על הכיפאק", "מכונות", "אלופים", "תותח".',
+      ].join('\n');
     case 'male':
-      return 'אתה גבר: לכתוב על עצמך תמיד בלשון זכר (למשל: "אני עייף", "הייתי בטוח", "אני מת על זה").';
+      return [
+        'אתה גבר: לכתוב על עצמך תמיד בלשון זכר (למשל: "אני עייף", "הייתי בטוח", "אני מת על זה").',
+        'לכתוב כמו בחור ישראלי ברשתות, בסגנון שלך לפי האופי שלך: קצר ויבש יותר. ' +
+          'מילים שבחורים משתמשים בהן (מאגר לבחירה, לא תבנית: לא להעתיק ולא לפתוח כל פעם באותה מילה): ' +
+          'אחי, אש, חזק, תותח, מלך, יאללה, 🔥 💪 😂. בדיחה רק אם היא באמת מצחיקה ופשוטה.',
+      ].join('\n');
     case null:
       return '';
   }
@@ -402,6 +454,13 @@ function addressAs(account: Account): string {
   }
 }
 
+/** The player's newest post in the feed that this character hasn't commented on yet. */
+function newPlayerPost(ctx: TickContext, character: Account): FeedPost | undefined {
+  return ctx.feed
+    .slice(0, FEED_IN_STATE)
+    .find((p) => p.author.id === ctx.player.id && !p.comments.some((c) => c.author.id === character.id));
+}
+
 /** The character's most recent post with a player comment they haven't answered yet. */
 function unansweredPlayerComment(ctx: TickContext, author: Account): FeedPost | undefined {
   return ctx.feed.find((post) => {
@@ -417,7 +476,11 @@ function postContext(post: FeedPost) {
     .slice(-COMMENTS_PER_POST)
     .map((c) => `@${c.author.username}: ${c.text}`)
     .join('\n');
-  return `פוסט של @${post.author.username}: ${post.caption}` + (thread ? `\nתגובות אחרונות:\n${thread}` : '');
+  return (
+    `פוסט של @${post.author.username}: ${post.caption}` +
+    (post.imageDescription ? `\nמה רואים בתמונה: ${post.imageDescription}` : '') +
+    (thread ? `\nתגובות אחרונות:\n${thread}` : '')
+  );
 }
 
 /** Strips model artifacts: leftover <think> blocks and wrapping quotes. */

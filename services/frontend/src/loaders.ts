@@ -32,7 +32,7 @@ export const clearCache = () => cache.clear()
 
 /** Loads the main tabs in the background, so the first switch to them is instant too. */
 export function prefetchTabs() {
-  void Promise.all([feedLoader(), messagesLoader()]).catch(() => {})
+  void Promise.all([feedLoader(), messagesLoader(), profileLoader()]).catch(() => {})
 }
 
 export const rootLoader = ({ request }: LoaderFunctionArgs) =>
@@ -51,6 +51,9 @@ export async function feedLoader() {
 }
 
 export const messagesLoader = () => cached<ConversationSummary[]>('/conversations')
+
+/** The current user's own posts, for the profile grid. */
+export const profileLoader = () => cached<Post[]>('/me/posts')
 
 /** Resolves to null when the conversation doesn't exist (or the id is malformed). */
 export async function conversationLoader({ params }: LoaderFunctionArgs) {

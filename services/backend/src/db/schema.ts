@@ -83,6 +83,9 @@ export const posts = pgTable(
     likeCount: integer('like_count').notNull().default(0),
     // Whether the world's one human liked it (on top of likeCount).
     playerLiked: boolean('player_liked').notNull().default(false),
+    // What the photo shows, written by a vision model when the user uploads it, so
+    // agents can react to the actual photo. Null for agent posts (their caption says it).
+    imageDescription: text('image_description'),
     createdAt: createdAt(),
   },
   (t) => [index().on(t.worldId, t.createdAt)],
