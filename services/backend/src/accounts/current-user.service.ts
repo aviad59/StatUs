@@ -1,10 +1,11 @@
-import { Inject, Injectable, NotFoundException } from '@nestjs/common';
-import { asc, eq } from 'drizzle-orm';
+import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
+import { and, asc, eq, isNull } from 'drizzle-orm';
 import type { Db } from '../db/client';
 import { DB } from '../db/db.module';
 import { accounts } from '../db/schema';
 
 type Account = typeof accounts.$inferSelect;
+type Gender = NonNullable<Account['gender']>;
 
 // Every request needs the current user, and each DB round trip can cost ~300 ms, so
 // it's cached briefly. After a reseed, the old account is served for up to this long.
@@ -33,14 +34,21 @@ export class CurrentUserService {
     return this.cached.account;
   }
 
-  /** Updates the current user's profile and refreshes the cache. */
-  async update(changes: Pick<Partial<Account>, 'gender'>): Promise<Account> {
+  /**
+   * Sets the user's gender, once (the welcome screen). Changing it later would leave
+   * the story half in one gender and half in the other: the summary, directions,
+   * memories and messages written so far keep the old one. 409 GENDER_ALREADY_SET.
+   */
+  async setGender(gender: Gender): Promise<Account> {
     const me = await this.get();
     const [updated] = await this.db
       .update(accounts)
-      .set(changes)
-      .where(eq(accounts.id, me.id))
+      .set({ gender })
+      .where(and(eq(accounts.id, me.id), isNull(accounts.gender)))
       .returning();
+    if (!updated) {
+      throw new ConflictException({ code: 'GENDER_ALREADY_SET', message: 'Gender is chosen once, at the start.' });
+    }
     this.cached = { account: Promise.resolve(updated), expires: Date.now() + CACHE_MS };
     return updated;
   }

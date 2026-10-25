@@ -14,9 +14,9 @@ export class AccountsController {
     return toUser(await this.currentUser.get());
   }
 
-  /** Profile settings. Agents use `gender` to address the user correctly in Hebrew. */
+  /** The welcome screen: agents use `gender` to address the user correctly in Hebrew. Set once. */
   @Patch('me')
   async update(@Body(new ZodBodyPipe(updateMeBody)) body: UpdateMeBody): Promise<User> {
-    return toUser(await this.currentUser.update(body));
+    return toUser(await this.currentUser.setGender(body.gender));
   }
 }

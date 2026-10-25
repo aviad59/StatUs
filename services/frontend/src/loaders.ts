@@ -35,11 +35,20 @@ export function prefetchTabs() {
   void Promise.all([feedLoader(), messagesLoader(), profileLoader()]).catch(() => {})
 }
 
-export const rootLoader = ({ request }: LoaderFunctionArgs) =>
-  api<User>('/me', { signal: request.signal })
+/** The current user, and how many conversations have unread messages (the nav badge). */
+export async function rootLoader({ request }: LoaderFunctionArgs) {
+  const [user, conversations] = await Promise.all([
+    api<User>('/me', { signal: request.signal }),
+    cached<ConversationSummary[]>('/conversations'),
+  ])
+  return { user, unread: conversations.filter((c) => c.unread).length }
+}
 
 /** The signed-in user, loaded once by the root route. */
-export const useCurrentUser = () => useRouteLoaderData<typeof rootLoader>('root')!
+export const useCurrentUser = () => useRouteLoaderData<typeof rootLoader>('root')!.user
+
+/** Conversations with messages the user hasn't seen yet. */
+export const useUnreadCount = () => useRouteLoaderData<typeof rootLoader>('root')!.unread
 
 export async function feedLoader() {
   const [posts, storyGroups, world] = await Promise.all([

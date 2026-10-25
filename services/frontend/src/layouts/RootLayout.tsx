@@ -1,10 +1,18 @@
 import { useEffect } from 'react'
-import { Outlet } from 'react-router'
+import { Navigate, Outlet, useLocation } from 'react-router'
 import { BottomNav } from '@/components/BottomNav.tsx'
-import { prefetchTabs } from '@/loaders.ts'
+import { prefetchTabs, useCurrentUser } from '@/loaders.ts'
 
 export function RootLayout() {
   useEffect(prefetchTabs, [])
+  const currentUser = useCurrentUser()
+  const { pathname } = useLocation()
+
+  // New users choose how to be addressed before anything else.
+  const welcome = pathname === '/welcome'
+  if (!currentUser.gender && !welcome) return <Navigate to="/welcome" replace />
+  if (currentUser.gender && welcome) return <Navigate to="/" replace />
+  if (welcome) return <Outlet />
 
   return (
     <div className="min-h-dvh bg-white text-neutral-900 dark:bg-neutral-950 dark:text-neutral-100">

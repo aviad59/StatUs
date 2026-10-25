@@ -123,29 +123,45 @@ const relationshipSeeds: [Username, Username | 'player', number][] = [
   ['amit.runs', 'player', 20],
 ];
 
-const beatSeeds = [
+// The opening of the story. When these run out, the story director writes the next
+// beats (world/story.service.ts). Directions are by username, in the infinitive.
+const beatSeeds: Omit<typeof storyBeats.$inferInsert, 'worldId' | 'position'>[] = [
   {
     key: 'maya_hints_breakup',
     title: 'מאיה רומזת שמשהו לא בסדר',
-    description:
-      'מאיה מפרסמת סטורי עצוב ומעורפל. החברים מגיבים ומנחשים, ונועם שולח לה הודעה פרטית.',
+    description: 'מאיה מפרסמת פוסט עצוב ומעורפל בלי להגיד מה קרה. נועם שם לב ומגיב.',
+    directions: {
+      'maya.cohen': 'לפרסם פוסט עם כיתוב עצוב ומעורפל, בלי להגיד מה קרה. בתמונה: כוס קפה לבד ליד חלון',
+      noam_levi: 'להגיב לפוסט האחרון של מאיה במשהו שמראה שאכפת לך, בלי העקיצה הרגילה שלך',
+    },
     status: 'active' as const,
   },
   {
-    key: 'gossip_page_leaks_breakup',
-    title: 'דף הרכילות מדליף את הפרידה',
+    key: 'rumor_spreads',
+    title: 'השמועה על הפרידה מתפשטת',
     description:
-      'דף הרכילות של השכונה מפרסם שמאיה ואורי נפרדו. מאיה כועסת ומנסה לגלות מי עומד מאחורי הדף.',
+      'יוני, שמנהל בסתר את דף הרכילות, רומז בפומבי שהוא יודע על מאיה ואורי. מאיה מבינה שמישהו מדבר עליה ופונה ל-@you.',
+    directions: {
+      'yoni.codes': 'להגיב לפוסט של מאיה ברמז עוקצני שמראה שאתה יודע משהו על אורי, בלי להגיד את זה ישירות',
+      'maya.cohen': 'לשלוח ל-@you הודעה ולשאול אם שמע משהו עלייך ועל אורי, כי נראה שמישהו מפיץ',
+    },
     status: 'pending' as const,
   },
   {
     key: 'noam_confesses',
-    title: 'נועם מתוודה',
-    description:
-      'נועם מתלבט אם לספר למאיה מה הוא מרגיש, ומתייעץ על זה בהודעה פרטית עם @you.',
+    title: 'נועם מתלבט',
+    description: 'נועם מתלבט אם לספר למאיה מה הוא מרגיש כלפיה, ומתייעץ על זה עם @you.',
+    directions: {
+      noam_levi: 'לשלוח ל-@you הודעה ולהתייעץ אם לספר למאיה מה אתה מרגיש כלפיה, עכשיו כשהיא לבד',
+    },
     status: 'pending' as const,
   },
 ];
+
+const storySummary =
+  'מאיה נפרדה מאורי לפני שבוע ולא סיפרה לאף אחד. נועם מאוהב בה כבר שנתיים, ופוטר מהעבודה בלי לספר. ' +
+  'יוני מנהל בסתר את דף הרכילות של השכונה ושמע על הפרידה. דנה מממנת את הטיולים שלה בהלוואה, ' +
+  'שירה חולמת לפתוח מאפייה עם עמית, ועמית רץ בסתר למרות פציעה בברך.';
 
 const flagSeeds: Record<string, unknown> = {
   maya_breakup_public: false,
@@ -160,7 +176,7 @@ async function seed() {
     await db.transaction(async (tx) => {
       await tx.delete(worlds);
 
-      const [world] = await tx.insert(worlds).values({}).returning();
+      const [world] = await tx.insert(worlds).values({ storySummary }).returning();
 
       const [me] = await tx
         .insert(accounts)
@@ -169,8 +185,8 @@ async function seed() {
           kind: 'human',
           username: 'you',
           name: 'השם שלך',
-          // Male by default; the user can switch to female on the profile page.
-          gender: 'male',
+          // Chosen on the welcome screen, once.
+          gender: null,
           avatarUrl: avatar(12),
         })
         .returning();

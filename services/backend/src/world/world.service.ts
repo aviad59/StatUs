@@ -8,12 +8,12 @@ import {
 import { ConfigService } from '@nestjs/config';
 import type { TickErrorCode, TickEvent, TickResult, WorldStatus } from '@status/shared';
 import { and, asc, desc, eq, isNull, lt, or } from 'drizzle-orm';
-import { AiService } from '../ai/ai.service';
 import type { Db } from '../db/client';
 import { DB } from '../db/db.module';
 import { accounts, characters, comments, posts, storyBeats, storyFlags, worlds } from '../db/schema';
-import { AgentService, type TickContext } from './agent.service';
+import { AgentService, type TickContext, type TurnPlan } from './agent.service';
 import { currentEnergy, energyConfig, type EnergyConfig, spendOne } from './energy';
+import { StoryService } from './story.service';
 
 type World = typeof worlds.$inferSelect;
 type Account = typeof accounts.$inferSelect;
@@ -22,8 +22,6 @@ const FEED_SIZE = 10;
 // A tick that has been "running" longer than this is assumed crashed, and the lock is taken over.
 const STALE_TICK_MS = 5 * 60_000;
 const MAX_POSTS_PER_TICK = 2;
-// A beat counts as played out when the decision model is at least this sure.
-const BEAT_DONE_THRESHOLD = 0.7;
 
 const conflict = (code: TickErrorCode, message: string) => new ConflictException({ code, message });
 
@@ -36,7 +34,7 @@ export class WorldService {
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly agents: AgentService,
-    private readonly ai: AiService,
+    private readonly story: StoryService,
     config: ConfigService,
   ) {
     this.energy = energyConfig(config);
@@ -109,20 +107,24 @@ export class WorldService {
     );
 
     // 2. Act one at a time, so later agents see earlier ones' posts and comments.
-    //    Replies the player is waiting for go first and don't count toward the cap.
+    //    Replies the player is waiting for go first and don't count toward the cap;
+    //    then characters the story needs (they have a direction in the active beat).
     const ordered = shuffle(plans.filter((p) => p !== null && p.action !== 'nothing'));
-    ordered.sort((a, b) => Number(b!.forced) - Number(a!.forced));
+    const rank = (plan: TurnPlan) => (plan.forced ? 2 : plan.direction ? 1 : 0);
+    ordered.sort((a, b) => rank(b!) - rank(a!));
 
     const events: TickEvent[] = [];
+    const acted: string[] = [];
     let spontaneous = 0;
     let newPosts = 0;
     for (const plan of ordered) {
       if (!plan!.forced && spontaneous >= this.maxActionsPerTick) break;
       // Leave room for comments: a tick of only posts feels like nobody talks to anyone.
-      if (plan!.action === 'post' && newPosts >= MAX_POSTS_PER_TICK) continue;
+      if (plan!.action === 'post' && !plan!.direction && newPosts >= MAX_POSTS_PER_TICK) continue;
       try {
         const event = await this.agents.act(ctx, plan!);
         if (event) events.push(event);
+        if (event && plan!.direction) acted.push(plan!.character.account.username);
         if (!plan!.forced) spontaneous++;
         if (event?.type === 'post') newPosts++;
       } catch (error) {
@@ -133,8 +135,8 @@ export class WorldService {
       throw new ServiceUnavailableException('Every agent turn failed. Is the AI provider running?');
     }
 
-    await this.advanceStory(ctx, events).catch((error: unknown) =>
-      this.logger.warn(`Story check failed: ${String(error)}`),
+    await this.story.advance(ctx, acted).catch((error: unknown) =>
+      this.logger.warn(`Story update failed: ${String(error)}`),
     );
     return events;
   }
@@ -173,42 +175,6 @@ export class WorldService {
   }
 
   /** Marks the active beat done once the agents have played it out, and starts the next one. */
-  private async advanceStory(ctx: TickContext, events: TickEvent[]) {
-    const beat = ctx.activeBeat;
-    if (!beat || !events.length) return;
-
-    const { yes } = await this.ai.decide(
-      {
-        beat: { title: beat.title, description: beat.description },
-        whatHappenedThisTick: events.map((e) => `${e.actor.username} (${e.type}): ${e.text}`),
-        recentFeed: ctx.feed.slice(0, 5).map((p) => ({
-          author: p.author.username,
-          caption: p.caption,
-          comments: p.comments.slice(-3).map((c) => `${c.author.username}: ${c.text}`),
-        })),
-      },
-      {
-        type: 'yesNo',
-        instructions: 'Has this story beat now been fully played out?',
-        criteria: 'Yes only if the main thing the beat describes has visibly happened.',
-      },
-    );
-    if (yes < BEAT_DONE_THRESHOLD) return;
-
-    await this.db.transaction(async (tx) => {
-      await tx
-        .update(storyBeats)
-        .set({ status: 'done', completedAt: new Date() })
-        .where(eq(storyBeats.id, beat.id));
-      const next = await tx.query.storyBeats.findFirst({
-        where: and(eq(storyBeats.worldId, ctx.worldId), eq(storyBeats.status, 'pending')),
-        orderBy: asc(storyBeats.position),
-      });
-      if (next) await tx.update(storyBeats).set({ status: 'active' }).where(eq(storyBeats.id, next.id));
-    });
-    this.logger.log(`Story beat done: ${beat.key}`);
-  }
-
   private toStatus(world: World): WorldStatus {
     return {
       tick: world.tick,

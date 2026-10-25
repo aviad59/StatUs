@@ -39,6 +39,9 @@ export const worlds = pgTable('worlds', {
   lastTickAt: timestamp('last_tick_at', { withTimezone: true }),
   // Set while a tick runs, so a world never runs two ticks at once.
   tickingSince: timestamp('ticking_since', { withTimezone: true }),
+  // The story so far, kept up to date by the story director (world/story.service.ts).
+  // Omniscient (it includes everyone's secrets), so it never goes into agent prompts.
+  storySummary: text('story_summary').notNull().default(''),
   createdAt: createdAt(),
 }).enableRLS();
 
@@ -83,8 +86,8 @@ export const posts = pgTable(
     likeCount: integer('like_count').notNull().default(0),
     // Whether the world's one human liked it (on top of likeCount).
     playerLiked: boolean('player_liked').notNull().default(false),
-    // What the photo shows, written by a vision model when the user uploads it, so
-    // agents can react to the actual photo. Null for agent posts (their caption says it).
+    // What the photo shows, so agents can react to it: a vision model's description of
+    // the user's uploads, or the prompt a generated agent photo was drawn from.
     imageDescription: text('image_description'),
     createdAt: createdAt(),
   },
@@ -134,6 +137,8 @@ export const conversations = pgTable(
     agentId: uuid('agent_id')
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
+    // When the human last opened the thread; agent messages after it are unread.
+    playerReadAt: timestamp('player_read_at', { withTimezone: true }),
     createdAt: createdAt(),
   },
   (t) => [unique().on(t.worldId, t.agentId)],
@@ -242,8 +247,14 @@ export const storyBeats = pgTable(
     // Stable identifier for code and flags, e.g. 'maya_reveals_breakup'.
     key: text('key').notNull(),
     title: text('title').notNull(),
-    // What happens, for the agents to act out.
+    // What happens. For the story director only; agents get just their own direction.
     description: text('description').notNull(),
+    // What each character does in this beat, by username, e.g. { "noam_levi": "לשלוח ל-@you
+    // הודעה ולהתייעץ..." }. The beat is done once each of them has acted (actedBy).
+    directions: jsonb('directions').$type<Record<string, string>>().notNull().default({}),
+    actedBy: text('acted_by').array().notNull().default(sql`'{}'::text[]`),
+    // The tick it became active; beats that drag on are closed (BEAT_MAX_TICKS).
+    startedTick: integer('started_tick'),
     position: integer('position').notNull(),
     status: storyBeatStatus('status').notNull().default('pending'),
     createdAt: createdAt(),

@@ -38,15 +38,17 @@ function failure(error: unknown, fallback: string): { ok: false; error: string }
 const text = async (request: Request) =>
   String((await request.formData()).get('text') ?? '').trim()
 
-export async function updateProfileAction({ request }: ActionFunctionArgs): Promise<ActionResult<User>> {
+/** The welcome screen: the user picks how the characters address them (once), then on to the feed. */
+export async function chooseGenderAction({ request }: ActionFunctionArgs) {
   const gender = (await request.formData()).get('gender')
-  if (gender !== 'male' && gender !== 'female') return { ok: false, error: 'בחירה לא תקינה' }
+  if (gender !== 'male' && gender !== 'female') return { ok: false, error: 'בחירה לא תקינה' } as const
   const body: UpdateMeBody = { gender: gender satisfies Gender }
   try {
-    return { ok: true, data: await patch<User>('/me', body) }
+    await patch<User>('/me', body)
   } catch (error) {
-    return failure(error, 'לא הצלחנו לשמור את השינוי')
+    return failure(error, 'לא הצלחנו לשמור את הבחירה. נסו שוב.')
   }
+  return redirect('/')
 }
 
 export async function tickAction({ request }: ActionFunctionArgs): Promise<ActionResult<TickResult>> {
@@ -76,6 +78,16 @@ export async function likeAction({ params, request }: ActionFunctionArgs): Promi
     return { ok: true, data: await put<LikeResult>(`/posts/${params.id}/like`, body) }
   } catch (error) {
     return failure(error, 'לא הצלחנו לעדכן את הלייק')
+  }
+}
+
+/** The user opened a conversation, so its messages are seen (clears the unread badge). */
+export async function readAction({ params }: ActionFunctionArgs): Promise<ActionResult<null>> {
+  try {
+    await put<void>(`/conversations/${params.id}/read`)
+    return { ok: true, data: null }
+  } catch (error) {
+    return failure(error, 'לא הצלחנו לעדכן את ההודעות')
   }
 }
 

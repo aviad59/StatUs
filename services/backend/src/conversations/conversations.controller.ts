@@ -1,4 +1,4 @@
-import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post } from '@nestjs/common';
+import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Put } from '@nestjs/common';
 import type { Conversation, ConversationSummary, Message, ReplyResult, SendMessageBody } from '@status/shared';
 import { CurrentUserService } from '../accounts/current-user.service';
 import { textBody } from '../common/schemas';
@@ -28,6 +28,13 @@ export class ConversationsController {
     @Body(new ZodBodyPipe(textBody)) body: SendMessageBody,
   ): Promise<Message> {
     return this.conversations.send(await this.currentUser.get(), id, body.text);
+  }
+
+  /** The user opened the conversation: its messages are no longer unread. */
+  @Put(':id/read')
+  @HttpCode(204)
+  async markRead(@Param('id', ParseUUIDPipe) id: string): Promise<void> {
+    await this.conversations.markRead(await this.currentUser.get(), id);
   }
 
   /** The agent answers the user's last message now (an AI call, a few seconds). */

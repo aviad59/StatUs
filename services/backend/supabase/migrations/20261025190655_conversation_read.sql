@@ -1,0 +1,1 @@
+ALTER TABLE "conversations" ADD COLUMN "player_read_at" timestamp with time zone;

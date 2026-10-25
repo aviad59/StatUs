@@ -11,7 +11,13 @@ import { currentEnergy, energyConfig, type EnergyConfig, spendOne } from '../wor
 
 type Me = { id: string; worldId: string };
 
-const toMessage = (message: typeof messages.$inferSelect, me: Me): Message => ({
+type MessageRow = typeof messages.$inferSelect;
+
+/** The agent wrote last, and the user hasn't opened the conversation since. */
+const isUnread = (last: MessageRow | undefined, readAt: Date | null, me: Me) =>
+  Boolean(last && last.senderId !== me.id && (!readAt || last.createdAt > readAt));
+
+const toMessage = (message: MessageRow, me: Me): Message => ({
   id: message.id,
   fromMe: message.senderId === me.id,
   text: message.text,
@@ -51,6 +57,7 @@ export class ConversationsService {
         id: row.id,
         user: toUser(row.agent),
         lastMessage: row.messages[0] ? toMessage(row.messages[0], me) : null,
+        unread: isUnread(row.messages[0], row.playerReadAt, me),
       }));
   }
 
@@ -68,7 +75,17 @@ export class ConversationsService {
       id: row.id,
       user: toUser(row.agent),
       messages: row.messages.map((message) => toMessage(message, me)),
+      unread: isUnread(row.messages.at(-1), row.playerReadAt, me),
     };
+  }
+
+  async markRead(me: Me, id: string) {
+    const [row] = await this.db
+      .update(conversations)
+      .set({ playerReadAt: new Date() })
+      .where(and(eq(conversations.id, id), eq(conversations.worldId, me.worldId)))
+      .returning({ id: conversations.id });
+    if (!row) throw new NotFoundException();
   }
 
   /**

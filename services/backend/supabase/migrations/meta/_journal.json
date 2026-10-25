@@ -57,6 +57,20 @@
       "when": 1792866911977,
       "tag": "20261024183511_post_image_description",
       "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1792954153573,
+      "tag": "20261025184913_story_director",
+      "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1792955215913,
+      "tag": "20261025190655_conversation_read",
+      "breakpoints": true
     }
   ]
 }

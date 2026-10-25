@@ -18,6 +18,7 @@ import {
   storyBeats,
 } from '../db/schema';
 import { StorageService } from '../storage/storage.service';
+import { directionFor } from './story.service';
 
 type Account = typeof accounts.$inferSelect;
 type Character = typeof characters.$inferSelect & { account: Account };
@@ -66,6 +67,8 @@ export interface TurnPlan {
   dm: { id: string | undefined; history: { from: string; text: string }[] };
   /** The character's post the player commented on, for reply_to_player_comment. */
   repliedPost: FeedPost | undefined;
+  /** What the active story beat needs from this character, if anything (see StoryService). */
+  direction: string | null;
   state: object;
 }
 
@@ -79,6 +82,28 @@ const photo = (seed: string) => `https://picsum.photos/seed/${seed}/600/600`;
 // Lower than the usual default (~0.8): small models produce broken Hebrew (dropped
 // letters, made-up words) noticeably more often at high temperature.
 const SHORT_TEXT = { temperature: 0.6, maxTokens: 200 };
+
+// Models default to a mini-essay with a punchline or a life lesson; real captions are
+// mostly a few words.
+const POST_TASK = `המשימה: לכתוב כיתוב לפוסט חדש שמתפרסם עכשיו.
+- כמו כיתוב אמיתי באינסטגרם: לרוב קצר מאוד, מכמה מילים ועד משפט אחד. לפעמים רק מילה ואימוג׳י.
+- בלי מוסר השכל, בלי משפט מוטיבציה ובלי פאנץ׳ בסוף. לא להסביר את הבדיחה.
+- לא חייב להיות על התחביב או העבודה שלך: גם אוכל, חברים, ים, מצב רוח, סתם יום.
+- לא לחזור על נושא של פוסט שכבר פרסמת.
+- בלי האשטגים.
+רק הכיתוב, בלי מירכאות.`;
+
+// Left alone, models write DMs as paragraphs of polished one-liners, quote the other
+// person back to them and keep reusing the same joke.
+const DM_TASK = `המשימה: לכתוב את ההודעה הבאה שלך בשיחה, כמו בוואטסאפ.
+- קצרה: לרוב 3 עד 12 מילים, משפט אחד. לפעמים שני משפטים קצרים. אנשים לא כותבים פסקאות בוואטסאפ.
+- לענות למה שנכתב אחרון, ישר לעניין. אם שאלו משהו, לענות על זה. אם כבר ענו לך, להתקדם ולא לשאול שוב.
+- לא לצטט את מה שהצד השני כתב, ולא לחזור על בדיחה, ביטוי או דימוי שכבר היו בשיחה או במה שכתבת קודם.
+- בלי שנינויות מתוחכמות ובלי דימויים. הומור, אם יש, פשוט ("חחח", "די נו").
+- לא חייבים לסיים בשאלה.
+- רוב הזמן הודעה אחת. כשיש יותר להגיד, לפצל ל-2 או 3 הודעות קצרות ברצף, כל אחת בשורה נפרדת.
+רק ההודעות, בלי מירכאות.`;
+const DM_MAX_PARTS = 3;
 
 // The character picks the photo. Faces aren't consistent between images yet, so
 // people stay out of focus.
@@ -139,7 +164,8 @@ export class AgentService {
     }));
     const memories = memoryRows.map((m) => m.content);
     const repliedPost = unansweredPlayerComment(ctx, me);
-    const base = { character, memories, dm: { id: dm?.id, history }, repliedPost };
+    const direction = directionFor(ctx.activeBeat, me.username);
+    const base = { character, memories, dm: { id: dm?.id, history }, repliedPost, direction };
 
     // The player is waiting: people answer DMs and comments on their own posts.
     if (history.at(-1)?.from === ctx.player.username) {
@@ -159,13 +185,7 @@ export class AgentService {
         score: r.score,
         scale: '-100 hostile .. 100 devoted',
       })),
-      story: {
-        activeBeat: ctx.activeBeat && {
-          title: ctx.activeBeat.title,
-          description: ctx.activeBeat.description,
-        },
-        flags: ctx.flags,
-      },
+      story: { yourPartRightNow: direction ?? undefined, flags: ctx.flags },
       feed: feed.map((p) => ({
         author: p.author.username,
         caption: p.caption,
@@ -192,10 +212,11 @@ export class AgentService {
     // decide() only ever returns one of the keys actually passed in.
     const { choice } = await this.ai.decide(state, {
       type: 'choice',
-      instructions:
-        `You are ${me.username}. What do you do right now? Posting is the main thing people do here: ` +
-        'post often, and almost certainly if several others have posted since your last post. ' +
-        'Pick "nothing" only if you have no reason to act.',
+      instructions: direction
+        ? `You are ${me.username}. The story needs this from you now: "${direction}". Pick the action that does it.`
+        : `You are ${me.username}. What do you do right now? Posting is the main thing people do here: ` +
+          'post often, and almost certainly if several others have posted since your last post. ' +
+          'Pick "nothing" only if you have no reason to act.',
       options: options as Record<SpontaneousAction, string>,
     });
     return { ...base, action: choice, forced: false, state };
@@ -254,11 +275,13 @@ export class AgentService {
       );
     }
     if (memories.length) lines.push('', 'דברים שקרו לאחרונה:', ...memories.map((m) => `- ${m}`));
-    if (ctx.activeBeat) {
+    // Only this character's own part: the beat description may hold others' secrets.
+    const direction = directionFor(ctx.activeBeat, character.account.username);
+    if (direction) {
       lines.push(
         '',
-        `מה קורה עכשיו בסיפור: ${ctx.activeBeat.title}. ${ctx.activeBeat.description}`,
-        'לשלב את זה רק אם זה נוגע לדמות שלך.',
+        `מה שקורה איתך עכשיו: ${direction}`,
+        'לעשות את זה בדרך שלך ובטבעיות. אם זה כבר נאמר או קרה בשיחה, לא לחזור על זה אלא להמשיך מאיפה שהשיחה נמצאת.',
       );
     }
     return lines.join('\n');
@@ -272,8 +295,7 @@ export class AgentService {
   private async post(ctx: TickContext, character: Character, system: string): Promise<TickEvent> {
     const caption = clean(
       await this.ai.generate(
-        'המשימה: לכתוב כיתוב לפוסט חדש שמתפרסם עכשיו, על משהו מהחיים שלך. ' +
-          'רק הכיתוב עצמו, משפט או שניים. בלי מירכאות.',
+        POST_TASK,
         { system, ...SHORT_TEXT, maxTokens: 300 },
       ),
     );
@@ -456,8 +478,8 @@ export class AgentService {
         (transcript
           ? `השיחה הפרטית שלך עם @${player} עד עכשיו:\n${transcript}\n\n`
           : `מתחילים עכשיו שיחה פרטית עם @${player}.\n\n`) +
-          `${addressAs(ctx.player)}\n` +
-          'המשימה: לכתוב את ההודעה הבאה שלך, כמו בוואטסאפ. רק ההודעה, קצרה. בלי מירכאות.',
+          `${addressAs(ctx.player)}\n\n` +
+          DM_TASK,
         { system, ...SHORT_TEXT },
       ),
     );
@@ -470,14 +492,27 @@ export class AgentService {
         .returning();
       id = row.id;
     }
-    const [[row]] = await Promise.all([
+    // Each line is its own message, like a few quick WhatsApp texts in a row. Explicit
+    // timestamps a millisecond apart keep them in order (not later: that would leave
+    // them unread after the user reads the conversation).
+    const texts = text.split('\n').map(clean).filter(Boolean).slice(0, DM_MAX_PARTS);
+    const now = Date.now();
+    const conversationId = id;
+    const [rows] = await Promise.all([
       this.db
         .insert(messages)
-        .values({ conversationId: id, senderId: plan.character.accountId, text })
+        .values(
+          texts.map((part, i) => ({
+            conversationId,
+            senderId: plan.character.accountId,
+            text: part,
+            createdAt: new Date(now + i),
+          })),
+        )
         .returning(),
-      this.remember(plan.character, `כתבתי ל-${player}: ${text}`),
+      this.remember(plan.character, `כתבתי ל-${player}: ${texts.join(' ')}`),
     ]);
-    return { id, text, row };
+    return { id, text: texts.join('\n'), row: rows.at(-1)! };
   }
 
   private async remember(character: Character, content: string) {

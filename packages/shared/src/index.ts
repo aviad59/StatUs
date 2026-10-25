@@ -56,12 +56,15 @@ export interface ConversationSummary {
   id: string
   user: User
   lastMessage: Message | null
+  /** The agent wrote last, after the user last opened the conversation. */
+  unread: boolean
 }
 
 export interface Conversation {
   id: string
   user: User
   messages: Message[]
+  unread: boolean
 }
 
 // --- World ticks and energy ------------------------------------------------
@@ -97,7 +100,7 @@ export type TickErrorCode = 'NO_ENERGY' | 'TICK_IN_PROGRESS'
 
 // --- Request bodies ----------------------------------------------------------
 
-/** PATCH /api/me → User */
+/** PATCH /api/me → User. Only while the gender is still unset (409 GENDER_ALREADY_SET). */
 export interface UpdateMeBody {
   gender: Gender
 }

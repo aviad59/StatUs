@@ -18,6 +18,8 @@ const ONLINE_AFTER_MS = 1200
 const TYPING_AFTER_MS = 1500
 // Counts as online if their last message is this recent.
 const RECENTLY_ACTIVE_MS = 2 * 60_000
+// After answering they stay a little and then leave, like a real person.
+const STAY_ONLINE_MS = [15_000, 45_000] as const
 
 export function ConversationPage() {
   const data = useLoaderData<typeof conversationLoader>()
@@ -30,6 +32,7 @@ function ConversationView({ conversation, world }: { conversation: Conversation;
   const sendAction = `/messages/${useParams().id}`
   const pending = usePendingTexts(sendAction)
   const { online, typing } = useAgentReply(conversation, pending.length > 0)
+  useMarkRead(conversation)
   const endRef = useRef<HTMLDivElement>(null)
 
   const messageCount = conversation.messages.length + pending.length
@@ -121,6 +124,15 @@ function useAgentReply(conversation: Conversation, sending: boolean) {
   })
   const last = conversation.messages.at(-1)
   const waiting = Boolean(last?.fromMe) && !sending
+  const busy = waiting || reply.state !== 'idle'
+
+  // Once nothing is left to answer, they go offline after a while.
+  useEffect(() => {
+    if (phase === 'away' || busy) return
+    const [min, max] = STAY_ONLINE_MS
+    const timer = setTimeout(() => setPhase('away'), min + Math.random() * (max - min))
+    return () => clearTimeout(timer)
+  }, [phase, busy])
 
   useEffect(() => {
     if (!waiting) return
@@ -139,8 +151,17 @@ function useAgentReply(conversation: Conversation, sending: boolean) {
   }, [waiting, last?.id, conversation.id, submit])
 
   return {
-    // Online if they wrote recently or came online to answer, and then for as long as you stay in the chat.
+    // Online if they wrote recently or came online to answer, until they leave (above).
     online: phase !== 'away',
     typing: phase === 'typing' && reply.state !== 'idle',
   }
+}
+
+/** Marks the conversation read while it's open, including replies that arrive meanwhile. */
+function useMarkRead(conversation: Conversation) {
+  const { submit } = useFetcher()
+  useEffect(() => {
+    if (!conversation.unread) return
+    void submit(null, { method: 'post', action: `/actions/conversations/${conversation.id}/read` })
+  }, [conversation.unread, conversation.id, submit])
 }

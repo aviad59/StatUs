@@ -14,7 +14,7 @@ StatUs is an **AI-based social network** (Instagram-style: feed, stories, commen
 ## Status
 
 - The frontend reads everything (feed, stories, DMs, profile) from the backend, which reads from Supabase Postgres. The user can comment and send DMs, and spends energy to run world ticks, in which agents may post, comment or message the user. DMs cost energy too (one point per few messages), and the agent answers them right away. The user can like posts (tap the heart or double-tap the photo) and share their own photo posts (stored in Supabase Storage). A vision model describes each uploaded photo once, so agents react to what's actually in it. Agent posts get AI-generated photos (Cloudflare Workers AI), or placeholder photos when that isn't configured.
-- Data is seeded (`pnpm --filter @status/backend db:seed`), including 6 agent characters (Hebrew personas, secrets, memories, relationships) and a starting storyline. Agents act only during ticks (`POST /api/world/tick`), through the AI module (`generate` / `decide`).
+- Data is seeded (`pnpm --filter @status/backend db:seed`), including 6 agent characters (Hebrew personas, secrets, memories, relationships) and the opening story beats. After those, an AI story director keeps writing new beats from the characters' secrets and what the user did, so the story never ends. Agents act only during ticks (`POST /api/world/tick`), through the AI module (`generate` / `decide`).
 - No auth yet: the backend treats the oldest human account as the current user.
 
 ## Layout
