@@ -14,6 +14,7 @@ import {
   messages,
   posts,
   relationships,
+  stories,
   type accounts,
   storyBeats,
 } from '../db/schema';
@@ -51,7 +52,7 @@ export interface TickContext {
   flags: Record<string, unknown>;
 }
 
-type SpontaneousAction = 'post' | 'comment' | 'comment_on_player_post' | 'message_player' | 'nothing';
+type SpontaneousAction = 'post' | 'story' | 'comment' | 'comment_on_player_post' | 'message_player' | 'nothing';
 type Action = SpontaneousAction | 'reply_to_player_comment';
 
 /** What one character will do this tick, decided before anyone acts. */
@@ -78,6 +79,7 @@ const MEMORIES_IN_STATE = 8;
 const DM_HISTORY = 8;
 
 const photo = (seed: string) => `https://picsum.photos/seed/${seed}/600/600`;
+const storyPhoto = (seed: string) => `https://picsum.photos/seed/${seed}/540/960`;
 
 // Lower than the usual default (~0.8): small models produce broken Hebrew (dropped
 // letters, made-up words) noticeably more often at high temperature.
@@ -115,6 +117,16 @@ const PHOTO_TASK = `Task: describe the photo you are posting with this caption, 
 Only the description, nothing else.`;
 const PHOTO_STYLE =
   'Candid smartphone photo, natural light, realistic, slightly imperfect framing, Instagram post, square.';
+// Story photos are square too, but shown as a tall 9:16 crop of the middle.
+const STORY_PHOTO_NOTE =
+  '- This is for a story: keep the main subject in the center of the frame, since the sides get cropped.';
+
+// Stories are a passing moment, with the kind of short text people stick on them.
+const STORY_TASK = `המשימה: לכתוב טקסט קצר שמופיע על הסטורי שלך, על משהו שקורה איתך ממש עכשיו.
+- 1 עד 6 מילים, כמו טקסט שמדביקים על סטורי ("בוקר ☕", "מי ער?", "לא נורמלי", "נו באמת").
+- לפעמים רק אימוג׳י אחד או שניים.
+- בלי מוסר השכל ובלי האשטגים.
+רק הטקסט, בלי מירכאות.`;
 
 // Real Instagram comments are a quick reaction, not a review of the photo. Without
 // this, models recite the photo description and squeeze in the persona's hobby.
@@ -198,6 +210,7 @@ export class AgentService {
 
     const options: Partial<Record<SpontaneousAction, string>> = {
       post: `Publish a new post about your life (${sinceLastPost(postsSinceMine)})`,
+      story: 'Share a story: a quick moment from right now, with a few words on it (gone after a day)',
       comment: "Comment on a friend's post in the feed (friends here comment on each other's posts a lot)",
       nothing: 'Do nothing this time',
     };
@@ -214,8 +227,9 @@ export class AgentService {
       type: 'choice',
       instructions: direction
         ? `You are ${me.username}. The story needs this from you now: "${direction}". Pick the action that does it.`
-        : `You are ${me.username}. What do you do right now? Posting is the main thing people do here: ` +
-          'post often, and almost certainly if several others have posted since your last post. ' +
+        : `You are ${me.username}. What do you do right now? Sharing is the main thing people do here: ` +
+          'stories for small everyday moments (most people share one or more a day), posts for nicer ' +
+          'moments (almost certainly if several others have posted since your last post). ' +
           'Pick "nothing" only if you have no reason to act.',
       options: options as Record<SpontaneousAction, string>,
     });
@@ -243,6 +257,8 @@ export class AgentService {
     switch (plan.action) {
       case 'post':
         return this.post(ctx, plan.character, system);
+      case 'story':
+        return this.story(ctx, plan.character, system);
       case 'comment':
         return this.comment(ctx, plan, system);
       case 'comment_on_player_post':
@@ -308,7 +324,7 @@ export class AgentService {
   }
 
   private async publish(ctx: TickContext, character: Character, system: string, id: string, caption: string) {
-    const image = await this.postPhoto(ctx, character, system, caption);
+    const image = await this.photo(ctx, character, system, 'posts', `The caption: ${caption}`);
     await this.db.insert(posts).values({
       id,
       worldId: ctx.worldId,
@@ -320,18 +336,49 @@ export class AgentService {
     });
   }
 
+  /** A quick moment from right now, gone after a day. Saved in the background, like posts. */
+  private async story(ctx: TickContext, character: Character, system: string): Promise<TickEvent> {
+    const text = clean(await this.ai.generate(STORY_TASK, { system, ...SHORT_TEXT }));
+    const storyId = randomUUID();
+    void this.publishStory(ctx, character, system, storyId, text).catch((error: unknown) =>
+      this.logger.warn(`Could not publish @${character.account.username}'s story: ${String(error)}`),
+    );
+    await this.remember(character, `העליתי סטורי: ${text}`);
+    return { type: 'story', actor: toUser(character.account), storyId, text };
+  }
+
+  private async publishStory(ctx: TickContext, character: Character, system: string, id: string, text: string) {
+    const image = await this.photo(ctx, character, system, 'stories', `The text on your story: ${text}`);
+    await this.db.insert(stories).values({
+      id,
+      worldId: ctx.worldId,
+      authorId: character.accountId,
+      imageUrl: image.url,
+      imageDescription: image.description,
+      text,
+    });
+  }
+
   /**
-   * The photo for a new post: the character describes it (in English, which image
-   * models follow best) and the image provider draws it, with one retry. If that
+   * The photo for a new post or story: the character describes it (in English, which
+   * image models follow best) and the image provider draws it, with one retry. If that
    * fails too, it throws and the post is dropped: an unrelated photo looks worse.
-   * Without an image provider, the post gets a random placeholder photo.
+   * Without an image provider, it gets a random placeholder photo.
    */
-  private async postPhoto(ctx: TickContext, character: Character, system: string, caption: string) {
+  private async photo(
+    ctx: TickContext,
+    character: Character,
+    system: string,
+    kind: 'posts' | 'stories',
+    about: string,
+  ) {
     if (this.ai.providers.image === 'none') {
-      return { url: photo(`${character.account.username}-${ctx.tick}-${Date.now()}`), description: null };
+      const seed = `${character.account.username}-${ctx.tick}-${Date.now()}`;
+      return { url: kind === 'posts' ? photo(seed) : storyPhoto(seed), description: null };
     }
+    const task = kind === 'posts' ? PHOTO_TASK : `${PHOTO_TASK}\n${STORY_PHOTO_NOTE}`;
     const description = clean(
-      await this.ai.generate(`${PHOTO_TASK}\n\nThe caption: ${caption}`, {
+      await this.ai.generate(`${task}\n\n${about}`, {
         system,
         hebrew: false,
         temperature: 0.7,
@@ -344,7 +391,7 @@ export class AgentService {
       this.logger.warn(`Image generation failed for @${character.account.username}, retrying: ${String(error)}`);
       return draw();
     });
-    const path = `${ctx.worldId}/posts/${randomUUID()}.jpg`;
+    const path = `${ctx.worldId}/${kind}/${randomUUID()}.jpg`;
     return { url: await this.storage.upload(path, jpeg, 'image/jpeg'), description };
   }
 

@@ -1,10 +1,11 @@
 import { Inject, Injectable, Logger } from '@nestjs/common';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, gt } from 'drizzle-orm';
 import { z } from 'zod';
 import { AiService } from '../ai/ai.service';
 import type { Db } from '../db/client';
 import { DB } from '../db/db.module';
-import { type accounts, characters, comments, conversations, messages, posts, storyBeats, worlds } from '../db/schema';
+import { type accounts, characters, comments, conversations, messages, posts, stories, storyBeats, worlds } from '../db/schema';
+import { STORY_TTL_MS } from '../feed/feed.service';
 import type { TickContext } from './agent.service';
 
 type Account = typeof accounts.$inferSelect;
@@ -77,7 +78,7 @@ export class StoryService {
     if (this.writing.has(worldId)) return;
     this.writing.add(worldId);
     try {
-      const [world, cast, beats, feed, dms] = await Promise.all([
+      const [world, cast, beats, feed, dms, storyRows] = await Promise.all([
         this.db.query.worlds.findFirst({ where: eq(worlds.id, worldId) }),
         this.db.query.characters.findMany({
           where: eq(characters.worldId, worldId),
@@ -97,6 +98,11 @@ export class StoryService {
         this.db.query.conversations.findMany({
           where: eq(conversations.worldId, worldId),
           with: { agent: true, messages: { orderBy: desc(messages.createdAt), limit: DMS_IN_PROMPT } },
+        }),
+        this.db.query.stories.findMany({
+          where: and(eq(stories.worldId, worldId), gt(stories.createdAt, new Date(Date.now() - STORY_TTL_MS))),
+          orderBy: asc(stories.createdAt),
+          with: { author: true },
         }),
       ]);
       if (!world) return;
@@ -142,6 +148,11 @@ export class StoryService {
         '',
         'פוסטים אחרונים ברשת (מהישן לחדש):',
         ...(feedText.length ? feedText : ['אין עדיין.']),
+        '',
+        'סטוריז מהיממה האחרונה (מהישן לחדש):',
+        ...(storyRows.length
+          ? storyRows.map((s) => `- @${s.author.username}: ${s.text ?? ''}${s.imageDescription ? ` (בתמונה: ${s.imageDescription})` : ''}`)
+          : ['אין.']),
         '',
         'הודעות פרטיות אחרונות עם השחקן:',
         ...(dmText.length ? dmText : ['אין עדיין.']),
@@ -191,7 +202,8 @@ const directorSystem = (player: string) => `התפקיד: לכתוב את העל
 
 מה דמות יכולה לעשות בפרק (רק את אלה):
 - לפרסם פוסט: תמונה וכיתוב.
-- להגיב על פוסט של מישהו אחר.
+- להעלות סטורי: תמונה של רגע עכשווי עם כמה מילים עליה, נעלם אחרי יום. טוב לרמזים ולמצבי רוח.
+- להגיב על פוסט של מישהו אחר (על סטורי אי אפשר להגיב).
 - לשלוח הודעה פרטית לשחקן. דמויות לא שולחות הודעות פרטיות זו לזו.
 
 כללים:
@@ -201,7 +213,7 @@ const directorSystem = (player: string) => `התפקיד: לכתוב את העל
 - סודות נחשפים לאט: קודם רמזים, ורק אחר כך גילוי. לכל היותר סוד אחד בכל פרק.
 - דרמה יומיומית ואמינה: אהבה, פרידות, חברויות, עבודה, כסף, רכילות, קנאה. בלי פשעים, אלימות, מחלות קשות או מוות.
 - להמשיך את מה שכבר קרה בלי לסתור אותו. לפתוח קווי עלילה חדשים מהסודות והיחסים של הדמויות, ולא לחזור על אותו קו שוב ושוב.
-- הוראה לפוסט אומרת על מה הפוסט ומה רואים בתמונה. הוראה לתגובה אומרת על הפוסט של מי.
+- הוראה לפוסט או לסטורי אומרת על מה הוא ומה רואים בתמונה. הוראה לתגובה אומרת על הפוסט של מי.
 - הכול בעברית, בלי צורות עם לוכסן ("את/ה").
 
 התשובה: JSON בלבד, בלי שום טקסט לפניו או אחריו:

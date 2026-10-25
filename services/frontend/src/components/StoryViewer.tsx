@@ -41,6 +41,14 @@ export function StoryViewer({ groups, startGroup, onClose }: StoryViewerProps) {
     <div className="fixed inset-0 z-20 flex justify-center bg-black">
       <div className="relative h-full w-full max-w-md">
         <img src={story.imageUrl} alt="" className="h-full w-full object-cover" />
+        {story.text && (
+          // Like Instagram's text sticker: centered, on a dark pill so it reads on any photo.
+          <p className="absolute inset-x-6 top-1/2 -translate-y-1/2 text-center">
+            <span className="rounded-lg bg-black/55 box-decoration-clone px-3 py-1 text-xl leading-relaxed font-semibold text-white">
+              {story.text}
+            </span>
+          </p>
+        )}
 
         <div className="absolute inset-x-0 top-0 space-y-3 bg-gradient-to-b from-black/60 to-transparent p-3 text-white">
           <div className="flex gap-1">

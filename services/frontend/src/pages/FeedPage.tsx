@@ -6,10 +6,10 @@ import { PullToRefresh } from '@/components/PullToRefresh.tsx'
 import { StoryBar } from '@/components/StoryBar.tsx'
 import { WorldBar } from '@/components/WorldBar.tsx'
 import { clearCache, type feedLoader } from '@/loaders.ts'
-import type { Post, TickResult } from '@/types.ts'
+import type { Post, StoryGroup, TickResult } from '@/types.ts'
 
-// Agent posts finish in the background after a tick (the photo is still being drawn),
-// so the feed reloads every few seconds until they show up.
+// Agent posts and stories finish in the background after a tick (the photo is still
+// being drawn), so the feed reloads every few seconds until they show up.
 const POLL_MS = 4000
 const POLL_FOR_MS = 60_000
 
@@ -23,7 +23,7 @@ export function FeedPage() {
   const ticking = tick.state !== 'idle'
   const refreshing = ticking || reloading
   const result = ticking ? undefined : tick.data
-  const pending = usePendingPosts(result, posts)
+  const pending = usePendingMedia(result, posts, storyGroups)
 
   // Pulling the feed runs a tick (the world moves one step). Without energy it
   // just reloads the feed, like a normal refresh.
@@ -60,14 +60,17 @@ export function FeedPage() {
   )
 }
 
-/** Posts from the last tick that aren't in the feed yet. Reloads the feed until they are. */
-function usePendingPosts(result: ActionResult<TickResult> | undefined, posts: Post[]) {
+/** Posts and stories from the last tick that aren't in the feed yet. Reloads the feed until they are. */
+function usePendingMedia(result: ActionResult<TickResult> | undefined, posts: Post[], groups: StoryGroup[]) {
   const { revalidate } = useRevalidator()
   const deadline = useRef<{ result: unknown; at: number } | null>(null)
 
-  const inFeed = new Set(posts.map((p) => p.id))
+  const inFeed = new Set([...posts.map((p) => p.id), ...groups.flatMap((g) => g.stories.map((s) => s.id))])
   const pending = result?.ok
-    ? result.data.events.flatMap((e) => (e.type === 'post' && !inFeed.has(e.postId) ? [e.postId] : []))
+    ? result.data.events.flatMap((e) => {
+        const id = e.type === 'post' ? e.postId : e.type === 'story' ? e.storyId : null
+        return id && !inFeed.has(id) ? [id] : []
+      })
     : []
   const key = pending.join(',')
 
@@ -81,7 +84,7 @@ function usePendingPosts(result: ActionResult<TickResult> | undefined, posts: Po
       void revalidate()
     }, POLL_MS)
     return () => clearTimeout(timer)
-  }, [key, result, posts, revalidate])
+  }, [key, result, posts, groups, revalidate])
 
   return new Set(pending)
 }

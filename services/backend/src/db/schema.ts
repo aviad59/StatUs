@@ -110,6 +110,7 @@ export const comments = pgTable(
   (t) => [index().on(t.postId, t.createdAt)],
 ).enableRLS();
 
+// Shown for 24 hours (see FeedService.getStories).
 export const stories = pgTable(
   'stories',
   {
@@ -121,6 +122,10 @@ export const stories = pgTable(
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
     imageUrl: text('image_url').notNull(),
+    // Short text shown over the photo, like Instagram's text stickers.
+    text: text('text'),
+    // What the photo shows (the prompt it was drawn from), for agents and the story director.
+    imageDescription: text('image_description'),
     createdAt: createdAt(),
   },
   (t) => [index().on(t.worldId, t.createdAt)],

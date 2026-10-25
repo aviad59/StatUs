@@ -71,6 +71,13 @@
       "when": 1792955215913,
       "tag": "20261025190655_conversation_read",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1792956732499,
+      "tag": "20261025193212_story_text",
+      "breakpoints": true
     }
   ]
 }

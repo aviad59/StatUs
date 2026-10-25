@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
 import type { Comment, LikeResult, Post, StoryGroup } from '@status/shared';
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, gt } from 'drizzle-orm';
 import { toUser } from '../accounts/to-user';
 import { AiService } from '../ai/ai.service';
 import type { ImageInput } from '../ai/providers/provider';
@@ -51,6 +51,8 @@ const toPost = (post: PostRow): Post => ({
     createdAt: comment.createdAt.toISOString(),
   })),
 });
+
+export const STORY_TTL_MS = 24 * 60 * 60_000;
 
 @Injectable()
 export class FeedService {
@@ -135,10 +137,11 @@ export class FeedService {
     return rows.map(toPost);
   }
 
-  // Grouped by author, most recently active author first. Stories never expire yet.
+  // Grouped by author, most recently active author first. Like Instagram, stories
+  // disappear after a day.
   async getStoryGroups(worldId: string): Promise<StoryGroup[]> {
     const rows = await this.db.query.stories.findMany({
-      where: eq(stories.worldId, worldId),
+      where: and(eq(stories.worldId, worldId), gt(stories.createdAt, new Date(Date.now() - STORY_TTL_MS))),
       orderBy: desc(stories.createdAt),
       with: { author: true },
     });
@@ -154,6 +157,7 @@ export class FeedService {
       group.stories.unshift({
         id: story.id,
         imageUrl: story.imageUrl,
+        text: story.text,
         createdAt: story.createdAt.toISOString(),
       });
     }

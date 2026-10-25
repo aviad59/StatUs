@@ -21,7 +21,8 @@ type Account = typeof accounts.$inferSelect;
 const FEED_SIZE = 10;
 // A tick that has been "running" longer than this is assumed crashed, and the lock is taken over.
 const STALE_TICK_MS = 5 * 60_000;
-const MAX_POSTS_PER_TICK = 2;
+// Posts and stories (each draws a photo); the rest of the tick is left for comments and DMs.
+const MAX_MEDIA_PER_TICK = 2;
 
 const conflict = (code: TickErrorCode, message: string) => new ConflictException({ code, message });
 
@@ -116,17 +117,18 @@ export class WorldService {
     const events: TickEvent[] = [];
     const acted: string[] = [];
     let spontaneous = 0;
-    let newPosts = 0;
+    let newMedia = 0;
     for (const plan of ordered) {
       if (!plan!.forced && spontaneous >= this.maxActionsPerTick) break;
       // Leave room for comments: a tick of only posts feels like nobody talks to anyone.
-      if (plan!.action === 'post' && !plan!.direction && newPosts >= MAX_POSTS_PER_TICK) continue;
+      const media = plan!.action === 'post' || plan!.action === 'story';
+      if (media && !plan!.direction && newMedia >= MAX_MEDIA_PER_TICK) continue;
       try {
         const event = await this.agents.act(ctx, plan!);
         if (event) events.push(event);
         if (event && plan!.direction) acted.push(plan!.character.account.username);
         if (!plan!.forced) spontaneous++;
-        if (event?.type === 'post') newPosts++;
+        if (event?.type === 'post' || event?.type === 'story') newMedia++;
       } catch (error) {
         failed(plan!.character, error);
       }

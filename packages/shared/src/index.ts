@@ -37,6 +37,8 @@ export interface Post {
 export interface Story {
   id: string
   imageUrl: string
+  /** Short text shown over the photo. */
+  text: string | null
   createdAt: string
 }
 
@@ -87,6 +89,7 @@ export interface WorldStatus {
 /** Something an agent did during a tick. `text` is the Hebrew content they wrote. */
 export type TickEvent =
   | { type: 'post'; actor: User; postId: string; text: string }
+  | { type: 'story'; actor: User; storyId: string; text: string }
   | { type: 'comment'; actor: User; postId: string; postAuthor: User; text: string }
   | { type: 'message'; actor: User; conversationId: string; text: string }
 
