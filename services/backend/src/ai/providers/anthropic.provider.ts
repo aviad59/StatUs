@@ -21,7 +21,8 @@ export class AnthropicProvider implements TextProvider, DecisionProvider {
     private readonly model: string,
   ) {
     this.name = `anthropic:${model}`;
-    this.client = new Anthropic({ apiKey });
+    // The SDK default (10 min, 2 retries) let one stuck request hold a tick for half an hour.
+    this.client = new Anthropic({ apiKey, timeout: 60_000, maxRetries: 1 });
   }
 
   async generate(prompt: string, options: GenerateOptions): Promise<string> {

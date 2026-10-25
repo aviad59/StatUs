@@ -4,10 +4,12 @@ import { timeUntil } from '@/format.ts'
 import type { TickEvent, TickResult, WorldStatus } from '@/types.ts'
 
 // Hebrew verbs agree with the actor's gender (masculine when unknown).
-const describe = (event: TickEvent) => {
+// A pending post is still being saved (its photo is drawn after the tick).
+const describe = (event: TickEvent, pending: Set<string>) => {
   const female = event.actor.gender === 'female'
   switch (event.type) {
     case 'post':
+      if (pending.has(event.postId)) return 'מעלה פוסט...'
       return female ? 'פרסמה פוסט' : 'פרסם פוסט'
     case 'comment':
       return `${female ? 'הגיבה' : 'הגיב'} לפוסט של ${event.postAuthor.username}`
@@ -20,10 +22,13 @@ const describe = (event: TickEvent) => {
 export function WorldBar({
   world,
   result,
+  pending,
   notice,
 }: {
   world: WorldStatus
   result: ActionResult<TickResult> | undefined
+  /** IDs of posts from the last tick that aren't in the feed yet. */
+  pending: Set<string>
   /** A message to show instead of the last result, e.g. "out of energy". */
   notice: string | null
 }) {
@@ -64,7 +69,7 @@ export function WorldBar({
               <ul className="space-y-0.5">
                 {result.data.events.map((event, i) => (
                   <li key={i}>
-                    <span className="font-semibold">{event.actor.username}</span> {describe(event)}
+                    <span className="font-semibold">{event.actor.username}</span> {describe(event, pending)}
                   </li>
                 ))}
               </ul>

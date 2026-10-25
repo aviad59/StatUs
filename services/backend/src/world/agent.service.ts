@@ -1,6 +1,7 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { randomUUID } from 'node:crypto';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import type { TickEvent } from '@status/shared';
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gt, ne, sql } from 'drizzle-orm';
 import { toUser } from '../accounts/to-user';
 import { AiService } from '../ai/ai.service';
 import type { Db } from '../db/client';
@@ -16,6 +17,7 @@ import {
   type accounts,
   storyBeats,
 } from '../db/schema';
+import { StorageService } from '../storage/storage.service';
 
 type Account = typeof accounts.$inferSelect;
 type Character = typeof characters.$inferSelect & { account: Account };
@@ -24,7 +26,10 @@ export interface FeedPost {
   id: string;
   author: Account;
   caption: string;
-  /** What the photo shows (set for the user's uploads; see FeedService.createPost). */
+  /**
+   * What the photo shows: a vision model's description for the user's uploads (see
+   * FeedService.createPost), the English image prompt for generated agent photos.
+   */
   imageDescription: string | null;
   createdAt: Date;
   comments: { author: Account; text: string }[];
@@ -36,7 +41,10 @@ export interface TickContext {
   tick: number;
   player: Account;
   accountsById: Map<string, Account>;
-  /** Newest first. Turns append to it, so later agents see earlier agents' actions. */
+  /**
+   * Newest first. Comments are appended as turns run, so later agents see them; new
+   * posts are saved in the background and only join the feed on the next tick.
+   */
   feed: FeedPost[];
   activeBeat: typeof storyBeats.$inferSelect | null;
   flags: Record<string, unknown>;
@@ -72,6 +80,17 @@ const photo = (seed: string) => `https://picsum.photos/seed/${seed}/600/600`;
 // letters, made-up words) noticeably more often at high temperature.
 const SHORT_TEXT = { temperature: 0.6, maxTokens: 200 };
 
+// The character picks the photo. Faces aren't consistent between images yet, so
+// people stay out of focus.
+const PHOTO_TASK = `Task: describe the photo you are posting with this caption, as a prompt for an image generator. Write it in English.
+- 3 to 4 sentences, under 80 words (the image model ignores the rest): what is in the frame, where, the light and the mood. Concrete and visual.
+- An ordinary photo a person in Israel would take with their phone, matching your life and the caption.
+- If people appear, show them from behind, from a distance, or only their hands. No close-up faces.
+- No text, signs or logos in the image.
+Only the description, nothing else.`;
+const PHOTO_STYLE =
+  'Candid smartphone photo, natural light, realistic, slightly imperfect framing, Instagram post, square.';
+
 // Real Instagram comments are a quick reaction, not a review of the photo. Without
 // this, models recite the photo description and squeeze in the persona's hobby.
 const COMMENT_TASK = `המשימה: לכתוב תגובה לפוסט הזה, כמו תגובה אמיתית של חבר באינסטגרם.
@@ -84,9 +103,12 @@ const COMMENT_TASK = `המשימה: לכתוב תגובה לפוסט הזה, כ�
 
 @Injectable()
 export class AgentService {
+  private readonly logger = new Logger(AgentService.name);
+
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly ai: AiService,
+    private readonly storage: StorageService,
   ) {}
 
   /**
@@ -94,7 +116,7 @@ export class AgentService {
    * parallel against the same snapshot; act() then carries them out in order.
    */
   async plan(ctx: TickContext, character: Character): Promise<TurnPlan> {
-    const [memoryRows, rels, dm] = await Promise.all([
+    const [memoryRows, rels, dm, postsSinceMine] = await Promise.all([
       this.db.query.characterMemories.findMany({
         where: eq(characterMemories.characterId, character.id),
         orderBy: desc(characterMemories.createdAt),
@@ -107,6 +129,7 @@ export class AgentService {
         where: and(eq(conversations.worldId, ctx.worldId), eq(conversations.agentId, character.accountId)),
         with: { messages: { orderBy: desc(messages.createdAt), limit: DM_HISTORY } },
       }),
+      this.postsSinceLastPost(ctx.worldId, character.accountId),
     ]);
 
     const me = character.account;
@@ -154,8 +177,8 @@ export class AgentService {
     };
 
     const options: Partial<Record<SpontaneousAction, string>> = {
-      post: 'Publish a new post about your life',
-      comment: 'Comment on one of the posts in the feed',
+      post: `Publish a new post about your life (${sinceLastPost(postsSinceMine)})`,
+      comment: "Comment on a friend's post in the feed (friends here comment on each other's posts a lot)",
       nothing: 'Do nothing this time',
     };
     // The player posted something this character hasn't reacted to: friends usually do.
@@ -170,11 +193,27 @@ export class AgentService {
     const { choice } = await this.ai.decide(state, {
       type: 'choice',
       instructions:
-        `You are ${me.username}. What do you do right now? Real people mostly scroll without posting, ` +
-        'so pick "nothing" unless something in your life, the story or the feed gives you a reason.',
+        `You are ${me.username}. What do you do right now? Posting is the main thing people do here: ` +
+        'post often, and almost certainly if several others have posted since your last post. ' +
+        'Pick "nothing" only if you have no reason to act.',
       options: options as Record<SpontaneousAction, string>,
     });
     return { ...base, action: choice, forced: false, state };
+  }
+
+  /** Posts by others since this character's last post; null if it has never posted. */
+  private async postsSinceLastPost(worldId: string, accountId: string): Promise<number | null> {
+    const last = await this.db.query.posts.findFirst({
+      where: and(eq(posts.worldId, worldId), eq(posts.authorId, accountId)),
+      orderBy: desc(posts.createdAt),
+      columns: { createdAt: true },
+    });
+    if (!last) return null;
+    const [row] = await this.db
+      .select({ n: count() })
+      .from(posts)
+      .where(and(eq(posts.worldId, worldId), ne(posts.authorId, accountId), gt(posts.createdAt, last.createdAt)));
+    return row.n;
   }
 
   /** Carries out a plan. Returns what happened, or null if nothing did. */
@@ -225,6 +264,11 @@ export class AgentService {
     return lines.join('\n');
   }
 
+  /**
+   * Writes the caption now; the photo is drawn and the post saved in the background
+   * (publish), so the tick doesn't wait for image generation. The post appears in the
+   * feed a few seconds after the tick, so other agents only see it from the next tick.
+   */
   private async post(ctx: TickContext, character: Character, system: string): Promise<TickEvent> {
     const caption = clean(
       await this.ai.generate(
@@ -233,33 +277,58 @@ export class AgentService {
         { system, ...SHORT_TEXT, maxTokens: 300 },
       ),
     );
-    const [row] = await this.db
-      .insert(posts)
-      .values({
-        worldId: ctx.worldId,
-        authorId: character.accountId,
-        // Placeholder until agents can generate images.
-        imageUrl: photo(`${character.account.username}-${ctx.tick}-${Date.now()}`),
-        caption,
-        likeCount: 5 + Math.floor(Math.random() * 80),
-      })
-      .returning();
-
-    ctx.feed.unshift({
-      id: row.id,
-      author: character.account,
-      caption,
-      imageDescription: null,
-      createdAt: row.createdAt,
-      comments: [],
-    });
+    const postId = randomUUID();
+    void this.publish(ctx, character, system, postId, caption).catch((error: unknown) =>
+      this.logger.warn(`Could not publish @${character.account.username}'s post: ${String(error)}`),
+    );
     await this.remember(character, `פרסמתי פוסט: ${caption}`);
-    return { type: 'post', actor: toUser(character.account), postId: row.id, text: caption };
+    return { type: 'post', actor: toUser(character.account), postId, text: caption };
+  }
+
+  private async publish(ctx: TickContext, character: Character, system: string, id: string, caption: string) {
+    const image = await this.postPhoto(ctx, character, system, caption);
+    await this.db.insert(posts).values({
+      id,
+      worldId: ctx.worldId,
+      authorId: character.accountId,
+      imageUrl: image.url,
+      imageDescription: image.description,
+      caption,
+      likeCount: 5 + Math.floor(Math.random() * 80),
+    });
+  }
+
+  /**
+   * The photo for a new post: the character describes it (in English, which image
+   * models follow best) and the image provider draws it, with one retry. If that
+   * fails too, it throws and the post is dropped: an unrelated photo looks worse.
+   * Without an image provider, the post gets a random placeholder photo.
+   */
+  private async postPhoto(ctx: TickContext, character: Character, system: string, caption: string) {
+    if (this.ai.providers.image === 'none') {
+      return { url: photo(`${character.account.username}-${ctx.tick}-${Date.now()}`), description: null };
+    }
+    const description = clean(
+      await this.ai.generate(`${PHOTO_TASK}\n\nThe caption: ${caption}`, {
+        system,
+        hebrew: false,
+        temperature: 0.7,
+        maxTokens: 300,
+      }),
+    );
+    const draw = () =>
+      this.ai.generateImage(`${description}\n\n${PHOTO_STYLE}`) ?? Promise.reject(new Error('No image provider'));
+    const jpeg = await draw().catch((error: unknown) => {
+      this.logger.warn(`Image generation failed for @${character.account.username}, retrying: ${String(error)}`);
+      return draw();
+    });
+    const path = `${ctx.worldId}/posts/${randomUUID()}.jpg`;
+    return { url: await this.storage.upload(path, jpeg, 'image/jpeg'), description };
   }
 
   private async comment(ctx: TickContext, plan: TurnPlan, system: string): Promise<TickEvent | null> {
     const me = plan.character.account;
-    // Re-read the feed now: earlier turns this tick may have added posts.
+    // Read the feed now, not at plan time: earlier turns this tick may have added comments.
     const feed = ctx.feed.slice(0, FEED_IN_STATE).filter((p) => p.author.id !== me.id);
     if (!feed.length) return null;
 
@@ -469,6 +538,11 @@ function unansweredPlayerComment(ctx: TickContext, author: Account): FeedPost | 
     if (lastFromPlayer === -1) return false;
     return !post.comments.slice(lastFromPlayer + 1).some((c) => c.author.id === author.id);
   });
+}
+
+function sinceLastPost(postsByOthers: number | null) {
+  if (postsByOthers === null) return "you haven't posted yet";
+  return `${postsByOthers} posts by others since your last post`;
 }
 
 function postContext(post: FeedPost) {

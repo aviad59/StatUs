@@ -20,7 +20,8 @@ type Account = typeof accounts.$inferSelect;
 
 const FEED_SIZE = 10;
 // A tick that has been "running" longer than this is assumed crashed, and the lock is taken over.
-const STALE_TICK_MS = 10 * 60_000;
+const STALE_TICK_MS = 5 * 60_000;
+const MAX_POSTS_PER_TICK = 2;
 // A beat counts as played out when the decision model is at least this sure.
 const BEAT_DONE_THRESHOLD = 0.7;
 
@@ -114,12 +115,16 @@ export class WorldService {
 
     const events: TickEvent[] = [];
     let spontaneous = 0;
+    let newPosts = 0;
     for (const plan of ordered) {
       if (!plan!.forced && spontaneous >= this.maxActionsPerTick) break;
+      // Leave room for comments: a tick of only posts feels like nobody talks to anyone.
+      if (plan!.action === 'post' && newPosts >= MAX_POSTS_PER_TICK) continue;
       try {
         const event = await this.agents.act(ctx, plan!);
         if (event) events.push(event);
         if (!plan!.forced) spontaneous++;
+        if (event?.type === 'post') newPosts++;
       } catch (error) {
         failed(plan!.character, error);
       }

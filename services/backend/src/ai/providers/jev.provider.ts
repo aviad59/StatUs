@@ -33,6 +33,7 @@ export class JevProvider implements DecisionProvider {
     const response = await fetch(`${this.baseUrl}/systemone`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${this.apiKey}`, 'Content-Type': 'application/json' },
+      signal: AbortSignal.timeout(60_000),
       body: JSON.stringify({
         model: this.model,
         state,

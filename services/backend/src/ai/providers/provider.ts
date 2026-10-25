@@ -26,5 +26,13 @@ export interface DecisionProvider {
   decide(state: unknown, question: Question): Promise<AnyAnswer>;
 }
 
+/** Text-to-image (agent post photos). Returns JPEG bytes. */
+export interface ImageProvider {
+  readonly name: string;
+  generateImage(prompt: string): Promise<Buffer>;
+}
+
 export const TEXT_PROVIDER = Symbol('TEXT_PROVIDER');
 export const DECISION_PROVIDER = Symbol('DECISION_PROVIDER');
+/** Null when AI_IMAGE_PROVIDER=none: callers fall back to placeholder photos. */
+export const IMAGE_PROVIDER = Symbol('IMAGE_PROVIDER');

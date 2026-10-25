@@ -2,7 +2,9 @@ import { Inject, Injectable } from '@nestjs/common';
 import {
   DECISION_PROVIDER,
   type DecisionProvider,
+  IMAGE_PROVIDER,
   type ImageInput,
+  type ImageProvider,
   TEXT_PROVIDER,
   type TextProvider,
 } from './providers/provider';
@@ -33,6 +35,8 @@ export interface GenerateOptions {
   maxTokens?: number;
   /** Images for the model to look at along with the prompt. */
   images?: ImageInput[];
+  /** False for text that isn't shown to users (e.g. English image prompts): skips HEBREW_RULE. */
+  hebrew?: boolean;
 }
 
 /**
@@ -44,16 +48,23 @@ export class AiService {
   constructor(
     @Inject(TEXT_PROVIDER) private readonly text: TextProvider,
     @Inject(DECISION_PROVIDER) private readonly decision: DecisionProvider,
+    @Inject(IMAGE_PROVIDER) private readonly image: ImageProvider | null,
   ) {}
 
   get providers() {
-    return { text: this.text.name, decision: this.decision.name };
+    return { text: this.text.name, decision: this.decision.name, image: this.image?.name ?? 'none' };
   }
 
   /** Free-form Hebrew text: posts, comments, DM replies. */
   generate(prompt: string, options: GenerateOptions = {}): Promise<string> {
-    const system = options.system ? `${HEBREW_RULE}\n\n${options.system}` : HEBREW_RULE;
-    return this.text.generate(prompt, { ...options, system });
+    const { hebrew = true, ...rest } = options;
+    const system = [hebrew ? HEBREW_RULE : '', options.system ?? ''].filter(Boolean).join('\n\n');
+    return this.text.generate(prompt, { ...rest, system });
+  }
+
+  /** A JPEG from an English prompt, or null when no image provider is configured. */
+  generateImage(prompt: string): Promise<Buffer> | null {
+    return this.image?.generateImage(prompt) ?? null;
   }
 
   /**

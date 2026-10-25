@@ -41,6 +41,8 @@ export class OllamaProvider implements TextProvider, DecisionProvider {
     const response = await fetch(`${this.baseUrl}/api/chat`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
+      // Generous: requests queue up in Ollama, and a cold model takes ~30 s to load.
+      signal: AbortSignal.timeout(120_000),
       body: JSON.stringify({
         model: this.model,
         stream: false,
