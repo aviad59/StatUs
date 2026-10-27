@@ -26,11 +26,17 @@ export function ProfilePage() {
           <ul className="grid grid-cols-3 gap-0.5">
             {posts.map((post) => (
               <li key={post.id}>
-                <img
-                  src={post.imageUrl}
-                  alt={post.caption}
-                  className="aspect-square w-full bg-neutral-200 object-cover dark:bg-neutral-800"
-                />
+                {post.imageUrl ? (
+                  <img
+                    src={post.imageUrl}
+                    alt={post.caption}
+                    className="aspect-square w-full bg-neutral-200 object-cover dark:bg-neutral-800"
+                  />
+                ) : (
+                  <div className="flex aspect-square w-full items-center justify-center bg-neutral-100 p-2 dark:bg-neutral-900">
+                    <p className="line-clamp-5 text-center text-xs">{post.caption}</p>
+                  </div>
+                )}
               </li>
             ))}
           </ul>

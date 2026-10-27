@@ -52,7 +52,14 @@ export interface TickContext {
   flags: Record<string, unknown>;
 }
 
-type SpontaneousAction = 'post' | 'story' | 'comment' | 'comment_on_player_post' | 'message_player' | 'nothing';
+type SpontaneousAction =
+  | 'post'
+  | 'text_post'
+  | 'story'
+  | 'comment'
+  | 'comment_on_player_post'
+  | 'message_player'
+  | 'nothing';
 type Action = SpontaneousAction | 'reply_to_player_comment';
 
 /** What one character will do this tick, decided before anyone acts. */
@@ -121,6 +128,13 @@ const PHOTO_STYLE =
 const STORY_PHOTO_NOTE =
   '- This is for a story: keep the main subject in the center of the frame, since the sides get cropped.';
 
+// Text posts are where people think out loud or ask the group something.
+const TEXT_POST_TASK = `המשימה: לכתוב פוסט טקסט, בלי תמונה: מחשבה, שאלה לחברים, קיטור קטן או משהו שקרה לך.
+- 1 עד 3 משפטים קצרים, כמו שאנשים כותבים בפייסבוק או בטוויטר.
+- בלי מוסר השכל, בלי משפט מוטיבציה ובלי האשטגים.
+- לא לחזור על נושא של פוסט שכבר פרסמת.
+רק הפוסט, בלי מירכאות.`;
+
 // Stories are a passing moment, with the kind of short text people stick on them.
 const STORY_TASK = `המשימה: לכתוב טקסט קצר שמופיע על הסטורי שלך, על משהו שקורה איתך ממש עכשיו.
 - 1 עד 6 מילים, כמו טקסט שמדביקים על סטורי ("בוקר ☕", "מי ער?", "לא נורמלי", "נו באמת").
@@ -164,7 +178,7 @@ export class AgentService {
       }),
       this.db.query.conversations.findFirst({
         where: and(eq(conversations.worldId, ctx.worldId), eq(conversations.agentId, character.accountId)),
-        with: { messages: { orderBy: desc(messages.createdAt), limit: DM_HISTORY } },
+        with: { messages: { orderBy: desc(messages.createdAt), limit: DM_HISTORY, with: { story: true } } },
       }),
       this.postsSinceLastPost(ctx.worldId, character.accountId),
     ]);
@@ -172,7 +186,7 @@ export class AgentService {
     const me = character.account;
     const history = (dm?.messages ?? []).toReversed().map((m) => ({
       from: m.senderId === me.id ? me.username : ctx.player.username,
-      text: m.text,
+      text: dmText(m),
     }));
     const memories = memoryRows.map((m) => m.content);
     const repliedPost = unansweredPlayerComment(ctx, me);
@@ -210,6 +224,7 @@ export class AgentService {
 
     const options: Partial<Record<SpontaneousAction, string>> = {
       post: `Publish a new post about your life (${sinceLastPost(postsSinceMine)})`,
+      text_post: 'Write a text-only post, no photo: a thought, a question to your friends, a small rant',
       story: 'Share a story: a quick moment from right now, with a few words on it (gone after a day)',
       comment: "Comment on a friend's post in the feed (friends here comment on each other's posts a lot)",
       nothing: 'Do nothing this time',
@@ -257,6 +272,8 @@ export class AgentService {
     switch (plan.action) {
       case 'post':
         return this.post(ctx, plan.character, system);
+      case 'text_post':
+        return this.textPost(ctx, plan.character, system);
       case 'story':
         return this.story(ctx, plan.character, system);
       case 'comment':
@@ -334,6 +351,31 @@ export class AgentService {
       caption,
       likeCount: 5 + Math.floor(Math.random() * 80),
     });
+  }
+
+  /** A post without a photo. Nothing to draw, so it's saved right away and others can react this tick. */
+  private async textPost(ctx: TickContext, character: Character, system: string): Promise<TickEvent> {
+    const caption = clean(await this.ai.generate(TEXT_POST_TASK, { system, ...SHORT_TEXT, maxTokens: 300 }));
+    const [row] = await this.db
+      .insert(posts)
+      .values({
+        worldId: ctx.worldId,
+        authorId: character.accountId,
+        imageUrl: null,
+        caption,
+        likeCount: 3 + Math.floor(Math.random() * 40),
+      })
+      .returning();
+    ctx.feed.unshift({
+      id: row.id,
+      author: character.account,
+      caption,
+      imageDescription: null,
+      createdAt: row.createdAt,
+      comments: [],
+    });
+    await this.remember(character, `כתבתי פוסט: ${caption}`);
+    return { type: 'post', actor: toUser(character.account), postId: row.id, text: caption };
   }
 
   /** A quick moment from right now, gone after a day. Saved in the background, like posts. */
@@ -479,7 +521,7 @@ export class AgentService {
   async replyInDm(player: Account, conversationId: string) {
     const conversation = await this.db.query.conversations.findFirst({
       where: and(eq(conversations.id, conversationId), eq(conversations.worldId, player.worldId)),
-      with: { messages: { orderBy: desc(messages.createdAt), limit: DM_HISTORY } },
+      with: { messages: { orderBy: desc(messages.createdAt), limit: DM_HISTORY, with: { story: true } } },
     });
     if (!conversation || conversation.messages[0]?.senderId !== player.id) return null;
 
@@ -499,7 +541,7 @@ export class AgentService {
 
     const history = conversation.messages.toReversed().map((m) => ({
       from: m.senderId === player.id ? player.username : character.account.username,
-      text: m.text,
+      text: dmText(m),
     }));
     const ctx = { worldId: player.worldId, player, activeBeat: activeBeat ?? null };
     const system = this.systemPrompt(ctx, character, character.memories.map((m) => m.content));
@@ -625,6 +667,16 @@ function unansweredPlayerComment(ctx: TickContext, author: Account): FeedPost | 
 function sinceLastPost(postsByOthers: number | null) {
   if (postsByOthers === null) return "you haven't posted yet";
   return `${postsByOthers} posts by others since your last post`;
+}
+
+/** A DM as the agent reads it: a reply to one of their stories says which story. */
+function dmText(message: { text: string; story: { text: string | null; imageDescription: string | null } | null }) {
+  const { story } = message;
+  if (!story) return message.text;
+  const about = [story.text && `"${story.text}"`, story.imageDescription && `בתמונה: ${story.imageDescription}`]
+    .filter(Boolean)
+    .join(', ');
+  return `(תגובה לסטורי שלך${about ? `: ${about}` : ''}) ${message.text}`;
 }
 
 function postContext(post: FeedPost) {

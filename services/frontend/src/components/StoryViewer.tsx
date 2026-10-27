@@ -1,5 +1,8 @@
-import { X } from 'lucide-react'
+import { Send, X } from 'lucide-react'
 import { useState } from 'react'
+import { useFetcher } from 'react-router'
+import type { storyReplyAction } from '@/actions.ts'
+import { useCurrentUser } from '@/loaders.ts'
 import type { StoryGroup } from '@/types.ts'
 import { Avatar } from './Avatar.tsx'
 
@@ -16,6 +19,15 @@ export function StoryViewer({ groups, startGroup, onClose }: StoryViewerProps) {
   const [storyIndex, setStoryIndex] = useState(0)
   const group = groups[groupIndex]
   const story = group.stories[storyIndex]
+  const currentUser = useCurrentUser()
+  const canReply = group.user.id !== currentUser.id
+
+  // Replying sends a DM and opens that chat (storyReplyAction). The story pauses
+  // while you type, like Instagram.
+  const reply = useFetcher<typeof storyReplyAction>()
+  const [typing, setTyping] = useState(false)
+  const paused = typing || reply.state !== 'idle'
+  const replyError = reply.state === 'idle' && reply.data && 'error' in reply.data ? reply.data.error : null
 
   const next = () => {
     if (storyIndex < group.stories.length - 1) {
@@ -60,7 +72,10 @@ export function StoryViewer({ groups, startGroup, onClose }: StoryViewerProps) {
                   <div
                     key={story.id}
                     className="h-full bg-white"
-                    style={{ animation: `story-progress ${STORY_DURATION_MS}ms linear forwards` }}
+                    style={{
+                      animation: `story-progress ${STORY_DURATION_MS}ms linear forwards`,
+                      animationPlayState: paused ? 'paused' : 'running',
+                    }}
                     onAnimationEnd={next}
                   />
                 )}
@@ -79,15 +94,41 @@ export function StoryViewer({ groups, startGroup, onClose }: StoryViewerProps) {
         <button
           type="button"
           onClick={prev}
-          className="absolute bottom-0 start-0 top-20 w-1/3"
+          className={`absolute start-0 top-20 w-1/3 ${canReply ? 'bottom-20' : 'bottom-0'}`}
           aria-label="הסטורי הקודם"
         />
         <button
           type="button"
           onClick={next}
-          className="absolute bottom-0 end-0 top-20 w-2/3"
+          className={`absolute end-0 top-20 w-2/3 ${canReply ? 'bottom-20' : 'bottom-0'}`}
           aria-label="הסטורי הבא"
         />
+
+        {canReply && (
+          <div className="absolute inset-x-0 bottom-0 space-y-1 bg-gradient-to-t from-black/60 to-transparent p-3 pt-8">
+            {replyError && <p className="text-center text-sm text-red-300">{replyError}</p>}
+            <reply.Form
+              method="post"
+              action={`/actions/stories/${story.id}/reply`}
+              className="flex items-center gap-3"
+            >
+              <input
+                name="text"
+                required
+                autoComplete="off"
+                maxLength={1000}
+                placeholder={`שליחת הודעה ל-${group.user.username}...`}
+                onFocus={() => setTyping(true)}
+                onBlur={(e) => setTyping(e.currentTarget.value !== '')}
+                className="min-w-0 flex-1 rounded-full border border-white/60 bg-transparent px-4 py-2.5 text-sm text-white outline-none placeholder:text-white/70"
+              />
+              <button type="submit" disabled={reply.state !== 'idle'} aria-label="שליחה" className="text-white">
+                {/* The plane points the RTL way. */}
+                <Send size={24} className="-scale-x-100" />
+              </button>
+            </reply.Form>
+          </div>
+        )}
       </div>
     </div>
   )

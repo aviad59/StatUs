@@ -47,7 +47,7 @@ export class FeedController {
     return this.feed.getPosts(me.worldId, me.id);
   }
 
-  /** multipart/form-data: `image` (JPEG, PNG or WebP) and `caption`. */
+  /** multipart/form-data: `image` (JPEG, PNG or WebP; optional for a text-only post) and `caption`. */
   @HttpPost('posts')
   @UseInterceptors(FileInterceptor('image', { limits: { fileSize: MAX_UPLOAD_BYTES } }))
   async createPost(

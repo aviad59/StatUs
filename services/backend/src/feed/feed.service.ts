@@ -70,7 +70,8 @@ export class FeedService {
    * to what's actually in it on the next tick.
    */
   async createPost(me: Account, image: UploadedImage | undefined, caption: string): Promise<Post> {
-    if (!image || !IMAGE_TYPES.has(image.mimetype)) {
+    if (!image) return this.createTextPost(me, caption);
+    if (!IMAGE_TYPES.has(image.mimetype)) {
       throw new BadRequestException('Expected a JPEG, PNG or WebP image');
     }
     const mediaType = image.mimetype as ImageInput['mediaType'];
@@ -84,6 +85,16 @@ export class FeedService {
     void this.describe(row.id, { data: image.buffer.toString('base64'), mediaType }).catch((error: unknown) =>
       this.logger.warn(`Could not describe the photo of post ${row.id}: ${String(error)}`),
     );
+    return toPost({ ...row, author: me, comments: [] });
+  }
+
+  /** No photo: the caption is the post. */
+  private async createTextPost(me: Account, caption: string): Promise<Post> {
+    if (!caption) throw new BadRequestException('A post without a photo needs text');
+    const [row] = await this.db
+      .insert(posts)
+      .values({ worldId: me.worldId, authorId: me.id, imageUrl: null, caption })
+      .returning();
     return toPost({ ...row, author: me, comments: [] });
   }
 

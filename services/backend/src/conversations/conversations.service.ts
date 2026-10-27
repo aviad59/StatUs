@@ -1,26 +1,28 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Conversation, ConversationSummary, Message, TickErrorCode } from '@status/shared';
+import type { Conversation, ConversationSummary, Message, StoryReplyResult, TickErrorCode } from '@status/shared';
 import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
 import { toUser } from '../accounts/to-user';
 import type { Db } from '../db/client';
 import { DB } from '../db/db.module';
-import { type accounts, conversations, messages, worlds } from '../db/schema';
+import { type accounts, conversations, messages, stories, worlds } from '../db/schema';
 import { AgentService } from '../world/agent.service';
 import { currentEnergy, energyConfig, type EnergyConfig, spendOne } from '../world/energy';
 
 type Me = { id: string; worldId: string };
 
 type MessageRow = typeof messages.$inferSelect;
+type StoryRow = typeof stories.$inferSelect;
 
 /** The agent wrote last, and the user hasn't opened the conversation since. */
 const isUnread = (last: MessageRow | undefined, readAt: Date | null, me: Me) =>
   Boolean(last && last.senderId !== me.id && (!readAt || last.createdAt > readAt));
 
-const toMessage = (message: MessageRow, me: Me): Message => ({
+const toMessage = (message: MessageRow & { story?: StoryRow | null }, me: Me): Message => ({
   id: message.id,
   fromMe: message.senderId === me.id,
   text: message.text,
+  story: message.story ? { imageUrl: message.story.imageUrl, text: message.story.text } : null,
   createdAt: message.createdAt.toISOString(),
 });
 
@@ -44,7 +46,7 @@ export class ConversationsService {
       where: eq(conversations.worldId, me.worldId),
       with: {
         agent: true,
-        messages: { orderBy: desc(messages.createdAt), limit: 1 },
+        messages: { orderBy: desc(messages.createdAt), limit: 1, with: { story: true } },
       },
     });
 
@@ -66,7 +68,7 @@ export class ConversationsService {
       where: and(eq(conversations.id, id), eq(conversations.worldId, me.worldId)),
       with: {
         agent: true,
-        messages: { orderBy: asc(messages.createdAt) },
+        messages: { orderBy: asc(messages.createdAt), with: { story: true } },
       },
     });
     if (!row) throw new NotFoundException();
@@ -105,6 +107,35 @@ export class ConversationsService {
       .values({ conversationId: id, senderId: me.id, text })
       .returning();
     return toMessage(row, me);
+  }
+
+  /**
+   * The user replies to an agent's story: a DM in their conversation (created if it's
+   * the first), linked to the story so both the chat and the agent know what it's about.
+   * Costs like any DM.
+   */
+  async replyToStory(me: Me, storyId: string, text: string): Promise<StoryReplyResult> {
+    const story = await this.db.query.stories.findFirst({
+      where: and(eq(stories.id, storyId), eq(stories.worldId, me.worldId)),
+    });
+    if (!story || story.authorId === me.id) throw new NotFoundException();
+
+    // The conversation is unique per (world, agent); create it on the first message.
+    await this.db
+      .insert(conversations)
+      .values({ worldId: me.worldId, agentId: story.authorId })
+      .onConflictDoNothing();
+    const conversation = await this.db.query.conversations.findFirst({
+      where: and(eq(conversations.worldId, me.worldId), eq(conversations.agentId, story.authorId)),
+    });
+    if (!conversation) throw new NotFoundException();
+
+    await this.payForMessage(me.worldId);
+    const [row] = await this.db
+      .insert(messages)
+      .values({ conversationId: conversation.id, senderId: me.id, text, storyId })
+      .returning();
+    return { conversationId: conversation.id, message: toMessage({ ...row, story }, me) };
   }
 
   /** The agent answers the user's last DM now. Null when there's nothing to answer. */

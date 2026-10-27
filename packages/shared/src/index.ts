@@ -24,7 +24,8 @@ export interface Comment {
 export interface Post {
   id: string
   author: User
-  imageUrl: string
+  /** Null for a text-only post. */
+  imageUrl: string | null
   caption: string
   /** Includes the user's own like. */
   likes: number
@@ -51,6 +52,8 @@ export interface Message {
   id: string
   fromMe: boolean
   text: string
+  /** The story this message replies to (shown as a thumbnail above it). */
+  story: { imageUrl: string; text: string | null } | null
   createdAt: string
 }
 
@@ -110,7 +113,8 @@ export interface UpdateMeBody {
 
 /**
  * POST /api/posts → Post. Sent as multipart/form-data with the photo as `image`
- * (JPEG, PNG or WebP, at most 10 MB) next to these fields.
+ * (JPEG, PNG or WebP, at most 10 MB) next to these fields. Without a photo it's a
+ * text-only post, and the caption is required.
  */
 export interface CreatePostBody {
   caption: string
@@ -142,4 +146,10 @@ export interface SendMessageBody {
 /** POST /api/conversations/:id/reply: the agent answers the last message now. Null if there was nothing to answer. */
 export interface ReplyResult {
   message: Message | null
+}
+
+/** POST /api/stories/:id/reply { text }: a DM to the story's author, about that story. */
+export interface StoryReplyResult {
+  conversationId: string
+  message: Message
 }

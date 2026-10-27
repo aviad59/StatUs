@@ -79,7 +79,8 @@ export const posts = pgTable(
     authorId: uuid('author_id')
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
-    imageUrl: text('image_url').notNull(),
+    // Null for a text-only post (the caption is the post).
+    imageUrl: text('image_url'),
     caption: text('caption').notNull(),
     // Displayed like count. A world has only a handful of accounts, so this is
     // set by the world's story logic rather than counted from real likes.
@@ -160,6 +161,8 @@ export const messages = pgTable(
       .notNull()
       .references(() => accounts.id, { onDelete: 'cascade' }),
     text: text('text').notNull(),
+    // Set when the message is a reply to one of the agent's stories.
+    storyId: uuid('story_id').references(() => stories.id, { onDelete: 'set null' }),
     createdAt: createdAt(),
   },
   (t) => [index().on(t.conversationId, t.createdAt)],
@@ -330,4 +333,5 @@ export const messagesRelations = relations(messages, ({ one }) => ({
     fields: [messages.conversationId],
     references: [conversations.id],
   }),
+  story: one(stories, { fields: [messages.storyId], references: [stories.id] }),
 }));

@@ -1,5 +1,5 @@
 import { type ActionFunctionArgs, createBrowserRouter } from 'react-router'
-import { commentAction, createPostAction, likeAction, readAction, replyAction, sendMessageAction, tickAction, chooseGenderAction } from './actions.ts'
+import { commentAction, createPostAction, likeAction, readAction, replyAction, sendMessageAction, storyReplyAction, tickAction, chooseGenderAction } from './actions.ts'
 import { RootLayout } from './layouts/RootLayout.tsx'
 import { clearCache, conversationLoader, feedLoader, messagesLoader, profileLoader, rootLoader } from './loaders.ts'
 import { ConversationPage } from './pages/ConversationPage.tsx'
@@ -35,7 +35,8 @@ export const router = createBrowserRouter([
         ? formAction === '/welcome' ||
           formAction === '/actions/tick' ||
           formAction.startsWith('/messages/') ||
-          formAction.startsWith('/actions/conversations/')
+          formAction.startsWith('/actions/conversations/') ||
+          formAction.startsWith('/actions/stories/')
         : defaultShouldRevalidate,
     element: <RootLayout />,
     errorElement: <ErrorPage />,
@@ -58,6 +59,7 @@ export const router = createBrowserRouter([
       { path: 'actions/posts/:id/like', action: fresh(likeAction) },
       { path: 'actions/conversations/:id/reply', action: fresh(replyAction) },
       { path: 'actions/conversations/:id/read', action: fresh(readAction) },
+      { path: 'actions/stories/:id/reply', action: fresh(storyReplyAction) },
       { path: '*', element: <NotFoundPage /> },
     ],
   },

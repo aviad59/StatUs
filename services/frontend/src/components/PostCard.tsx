@@ -10,7 +10,7 @@ import { CommentsSheet } from './CommentsSheet.tsx'
 import { TextForm } from './TextForm.tsx'
 
 const PREVIEW_COMMENTS = 2
-// Two taps on the photo within this window count as a double tap.
+// Two taps on the photo (or a text post's text) within this window count as a double tap.
 const DOUBLE_TAP_MS = 300
 
 export function PostCard({ post }: { post: Post }) {
@@ -46,12 +46,19 @@ export function PostCard({ post }: { post: Post }) {
 
       {/* touch-action: manipulation stops the browser treating a double tap as zoom. */}
       <div className="relative touch-manipulation select-none" onClick={onPhotoTap}>
-        <img
-          src={post.imageUrl}
-          alt={post.caption}
-          draggable={false}
-          className="aspect-square w-full bg-neutral-200 object-cover dark:bg-neutral-800"
-        />
+        {post.imageUrl ? (
+          <img
+            src={post.imageUrl}
+            alt={post.caption}
+            draggable={false}
+            className="aspect-square w-full bg-neutral-200 object-cover dark:bg-neutral-800"
+          />
+        ) : (
+          // A text-only post: the text takes the photo's place.
+          <p className="flex min-h-48 items-center justify-center bg-neutral-100 px-6 py-10 text-center text-xl leading-relaxed font-medium whitespace-pre-line dark:bg-neutral-900">
+            {post.caption}
+          </p>
+        )}
         {burst > 0 && (
           <span
             key={burst}
@@ -76,9 +83,11 @@ export function PostCard({ post }: { post: Post }) {
           </button>
         </div>
         <p className="font-semibold">{likes.toLocaleString('he-IL')} לייקים</p>
-        <p>
-          <span className="font-semibold">{post.author.username}</span> {post.caption}
-        </p>
+        {post.imageUrl && (
+          <p>
+            <span className="font-semibold">{post.author.username}</span> {post.caption}
+          </p>
+        )}
         {post.comments.length > PREVIEW_COMMENTS && (
           <button type="button" onClick={() => setSheetOpen(true)} className="text-neutral-500">
             הצגת כל {post.comments.length} התגובות

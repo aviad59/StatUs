@@ -14,6 +14,7 @@ import type {
   Post,
   ReplyResult,
   SendMessageBody,
+  StoryReplyResult,
   TickErrorCode,
   TickResult,
   UpdateMeBody,
@@ -62,7 +63,9 @@ export async function tickAction({ request }: ActionFunctionArgs): Promise<Actio
 /** Shares a new post: the form has `image` (already resized, see image.ts) and `caption`. Goes to the feed. */
 export async function createPostAction({ request }: ActionFunctionArgs) {
   const form = await request.formData()
-  if (!(form.get('image') instanceof Blob)) return { ok: false, error: 'צריך לבחור תמונה' } as const
+  if (!(form.get('image') instanceof Blob) && !String(form.get('caption') ?? '').trim()) {
+    return { ok: false, error: 'צריך תמונה או טקסט' } as const
+  }
   try {
     await postForm<Post>('/posts', form, request.signal)
   } catch (error) {
@@ -112,6 +115,21 @@ export async function sendMessageAction({
   if (!body.text) return { ok: false, error: 'ההודעה ריקה' }
   try {
     return { ok: true, data: await post<Message>(`/conversations/${params.id}/messages`, body) }
+  } catch (error) {
+    return failure(error, 'לא הצלחנו לשלוח את ההודעה')
+  }
+}
+
+/**
+ * Replies to an agent's story with a DM, then opens that conversation, where the agent
+ * answers right away (ConversationPage). Costs like any DM.
+ */
+export async function storyReplyAction({ params, request }: ActionFunctionArgs) {
+  const body: SendMessageBody = { text: await text(request) }
+  if (!body.text) return { ok: false, error: 'ההודעה ריקה' } as const
+  try {
+    const { conversationId } = await post<StoryReplyResult>(`/stories/${params.id}/reply`, body)
+    return redirect(`/messages/${conversationId}`)
   } catch (error) {
     return failure(error, 'לא הצלחנו לשלוח את ההודעה')
   }

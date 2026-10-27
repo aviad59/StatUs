@@ -7,7 +7,7 @@ import { DmCounter } from '@/components/DmCounter.tsx'
 import { TextForm } from '@/components/TextForm.tsx'
 import { clockTime, timeAgo } from '@/format.ts'
 import type { conversationLoader } from '@/loaders.ts'
-import type { Conversation, User, WorldStatus } from '@/types.ts'
+import type { Conversation, Message, User, WorldStatus } from '@/types.ts'
 import { NotFoundPage } from './NotFoundPage.tsx'
 
 const bubble = 'max-w-[75%] rounded-2xl px-3 py-2 text-sm'
@@ -69,13 +69,16 @@ function ConversationView({ conversation, world }: { conversation: Conversation;
           <li
             key={message.id}
             title={clockTime(message.createdAt)}
-            className={`${bubble} ${
-              message.fromMe
-                ? 'self-end bg-blue-500 text-white'
-                : 'self-start bg-neutral-100 dark:bg-neutral-800'
-            }`}
+            className={`flex flex-col gap-1 ${message.fromMe ? 'items-end' : 'items-start'}`}
           >
-            {message.text}
+            {message.story && <StoryQuote story={message.story} name={conversation.user.name} />}
+            <p
+              className={`${bubble} ${
+                message.fromMe ? 'bg-blue-500 text-white' : 'bg-neutral-100 dark:bg-neutral-800'
+              }`}
+            >
+              {message.text}
+            </p>
           </li>
         ))}
         {pending.map((text, i) => (
@@ -103,6 +106,23 @@ function ConversationView({ conversation, world }: { conversation: Conversation;
       <div className="sticky bottom-14 bg-white p-3 dark:bg-neutral-950">
         <DmCounter world={world} sending={pending.length} />
         <TextForm action={sendAction} placeholder="הודעה..." submitLabel="שליחה" />
+      </div>
+    </div>
+  )
+}
+
+/** The story a message replies to, as a small thumbnail above it. */
+function StoryQuote({ story, name }: { story: NonNullable<Message['story']>; name: string }) {
+  return (
+    <div className="space-y-1">
+      <p className="text-xs text-neutral-500">תגובה לסטורי של {name}</p>
+      <div className="relative w-24 overflow-hidden rounded-xl">
+        <img src={story.imageUrl} alt="" className="aspect-[9/16] w-full bg-neutral-200 object-cover dark:bg-neutral-800" />
+        {story.text && (
+          <span className="absolute inset-x-1 top-1/2 -translate-y-1/2 text-center text-[10px] font-semibold text-white [text-shadow:0_1px_3px_rgb(0_0_0/0.9)]">
+            {story.text}
+          </span>
+        )}
       </div>
     </div>
   )
