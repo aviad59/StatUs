@@ -5,6 +5,7 @@
 import { type ActionFunctionArgs, redirect, useFetchers } from 'react-router'
 import { ApiError, patch, post, postForm, put } from '@/api.ts'
 import type {
+  ChooseSceneBody,
   Comment,
   CreateCommentBody,
   Gender,
@@ -13,7 +14,10 @@ import type {
   Message,
   Post,
   ReplyResult,
+  Scene,
   SendMessageBody,
+  StartConversationBody,
+  StartConversationResult,
   StoryReplyResult,
   TickErrorCode,
   TickResult,
@@ -132,6 +136,30 @@ export async function storyReplyAction({ params, request }: ActionFunctionArgs) 
     return redirect(`/messages/${conversationId}`)
   } catch (error) {
     return failure(error, 'לא הצלחנו לשלוח את ההודעה')
+  }
+}
+
+/** The user decides in a scene ("what do we do?"); the story moves on from their choice. Free. */
+export async function chooseSceneAction({ params, request }: ActionFunctionArgs): Promise<ActionResult<Scene>> {
+  const body: ChooseSceneBody = { choice: String((await request.formData()).get('choice') ?? '') }
+  try {
+    return { ok: true, data: await post<Scene>(`/scenes/${params.id}/choose`, body) }
+  } catch (error) {
+    if (error instanceof ApiError && error.code === 'ALREADY_CHOSEN') {
+      return { ok: false, error: 'כבר הוחלט כאן' }
+    }
+    return failure(error, 'לא הצלחנו לשמור את הבחירה. נסו שוב.')
+  }
+}
+
+/** Opens the DM thread with an agent (from their profile or the people row), creating it if needed. Free. */
+export async function startConversationAction({ params }: ActionFunctionArgs) {
+  const body: StartConversationBody = { username: params.username ?? '' }
+  try {
+    const { conversationId } = await post<StartConversationResult>('/conversations', body)
+    return redirect(`/messages/${conversationId}`)
+  } catch (error) {
+    return failure(error, 'לא הצלחנו לפתוח את השיחה')
   }
 }
 

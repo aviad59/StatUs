@@ -1,4 +1,4 @@
-import { Home, MessageCircle, SquarePlus } from 'lucide-react'
+import { Home, MessageCircle, SquarePen } from 'lucide-react'
 import { NavLink } from 'react-router'
 import { useCurrentUser, useUnreadCount } from '@/loaders.ts'
 import { Avatar } from './Avatar.tsx'
@@ -20,7 +20,7 @@ export function BottomNav() {
         <Home size={24} />
       </NavLink>
       <NavLink to="/new" className={linkClass} aria-label="פוסט חדש">
-        <SquarePlus size={24} />
+        <SquarePen size={24} />
       </NavLink>
       <NavLink to="/messages" className={linkClass} aria-label={unread ? `הודעות, ${unread} לא נקראו` : 'הודעות'}>
         <span className="relative">

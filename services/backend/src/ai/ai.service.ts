@@ -1,4 +1,4 @@
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Logger } from '@nestjs/common';
 import {
   DECISION_PROVIDER,
   type DecisionProvider,
@@ -45,6 +45,8 @@ export interface GenerateOptions {
  */
 @Injectable()
 export class AiService {
+  private readonly logger = new Logger(AiService.name);
+
   constructor(
     @Inject(TEXT_PROVIDER) private readonly text: TextProvider,
     @Inject(DECISION_PROVIDER) private readonly decision: DecisionProvider,
@@ -56,10 +58,15 @@ export class AiService {
   }
 
   /** Free-form Hebrew text: posts, comments, DM replies. */
-  generate(prompt: string, options: GenerateOptions = {}): Promise<string> {
+  async generate(prompt: string, options: GenerateOptions = {}): Promise<string> {
     const { hebrew = true, ...rest } = options;
     const system = [hebrew ? HEBREW_RULE : '', options.system ?? ''].filter(Boolean).join('\n\n');
-    return this.text.generate(prompt, { ...rest, system });
+    const started = Date.now();
+    try {
+      return await this.text.generate(prompt, { ...rest, system });
+    } finally {
+      this.logger.debug(`generate ${Date.now() - started}ms`);
+    }
   }
 
   /** A JPEG from an English prompt, or null when no image provider is configured. */
@@ -79,7 +86,9 @@ export class AiService {
    * }); // choice: 'reply' | 'like' | 'ignore'
    */
   async decide<const Q extends Question>(state: unknown, question: Q): Promise<Answer<Q>> {
+    const started = Date.now();
     const answer = await this.decision.decide(state, question);
+    this.logger.debug(`decide ${question.type} ${Date.now() - started}ms`);
     return normalize(question, answer) as Answer<Q>;
   }
 }

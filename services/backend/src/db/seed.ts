@@ -1,8 +1,15 @@
-// Dev seed: wipes ALL worlds and recreates one demo world: 6 agents with characters,
-// relationships and a starting storyline, plus posts, stories and DMs.
+// Dev seed: wipes ALL worlds and recreates one demo world: a shared flat in Florentin
+// with 6 agent characters (4 roommates, the landlord and the neighbor downstairs), their
+// relationships, act 1 of the season (world/arc.ts) as scripted beats with their scenes,
+// plus posts, stories and DMs.
 // Run with `pnpm db:seed`. Refuses to run against a non-local database unless
 // SEED_ALLOW_REMOTE=1 is set, because it deletes everything.
+//
+// The player picks how to be addressed (gender) only after this, on the welcome screen,
+// so every seeded line aimed at them is neutral: plural, or second-person past forms
+// that are spelled the same for both ("סחבת", "ירדת").
 
+import { FIRST_DIRECTED_ACT } from '../world/arc';
 import { createDb, createSql } from './client';
 import {
   accounts,
@@ -13,6 +20,7 @@ import {
   messages,
   posts,
   relationships,
+  scenes,
   stories,
   storyBeats,
   storyFlags,
@@ -35,137 +43,274 @@ const ago = (minutes: number) => new Date(Date.now() - minutes * MINUTE);
 const HOUR = 60;
 const DAY = 24 * HOUR;
 
+// `bio` is the public profile text: what anyone can see, never a secret.
 const agentSeeds = [
-  { username: 'maya.cohen', name: 'מאיה כהן', gender: 'female', avatar: 5 },
-  { username: 'noam_levi', name: 'נועם לוי', gender: 'male', avatar: 13 },
-  { username: 'dana.travels', name: 'דנה מזרחי', gender: 'female', avatar: 9 },
-  { username: 'yoni.codes', name: 'יוני פרידמן', gender: 'male', avatar: 15 },
-  { username: 'shira_bakes', name: 'שירה פרץ', gender: 'female', avatar: 20 },
-  { username: 'amit.runs', name: 'עמית כץ', gender: 'male', avatar: 33 },
+  {
+    username: 'ofir.excel',
+    name: 'אופיר שטרן',
+    gender: 'male',
+    avatar: 13,
+    bio: 'מנהל מוצר. מנהל גם את קבוצת הדירה ואת האקסל שלה (לשונית "חובות" בצהוב) 📊',
+  },
+  {
+    username: 'tamar.on.stage',
+    name: 'תמר אלמוג',
+    gender: 'female',
+    avatar: 9,
+    bio: 'סטודנטית למשחק 🎭 | מתאמנת בעיקר ב-2 בלילה | השכנים כבר מכירים את המונולוג',
+  },
+  {
+    username: 'gal_reserve',
+    name: 'גל בן חיים',
+    gender: 'male',
+    avatar: 33,
+    bio: 'חזרתי מ-120 יום מילואים | שקשוקה לכל מי שעובר | מזגן על 18, לא יותר',
+  },
+  {
+    username: 'shani.law',
+    name: 'שני רוזן',
+    gender: 'female',
+    avatar: 5,
+    bio: 'שנה ג׳ משפטים ⚖️ | כל ויכוח בדירה הוא תיק | קוראת חוזים בשביל הכיף',
+  },
+  {
+    username: 'shmulik.nadlan',
+    name: 'שמוליק אזולאי',
+    gender: 'male',
+    avatar: 60,
+    bio: 'בעל הבית. גדלתי בדירה הזאת 1975 עד 1992 🏠 שכירות עד ה-10 לחודש בבקשה',
+  },
+  {
+    username: 'rina.vaad',
+    name: 'רינה גבאי',
+    gender: 'female',
+    avatar: 47,
+    bio: 'יו״ר ועד הבית, קומה 2 | אמא של פיצי 🐈 | שומעת הכול',
+  },
 ] as const;
 
 type Username = (typeof agentSeeds)[number]['username'];
 
-// Personas are written as instructions to the model (second person), in Hebrew.
+// Personas are written as instructions to the model (second person), in Hebrew. Each
+// says how the character is funny and how they write, so their voices stay apart.
 const characterSeeds: Record<
   Username,
   { persona: string; secrets: string[]; memories: [string, number][] }
 > = {
-  'maya.cohen': {
+  'ofir.excel': {
     persona:
-      'את מאיה, בת 29 מתל אביב, מעצבת גרפית בסטארטאפ. חברותית, חמה ומעט דרמטית, הדבק של החבר׳ה: את מארגנת את המפגשים ואת כולם בקבוצה. אוהבת אמנות, מוזיאונים וברים קטנים. כותבת קצר, ספונטני, עם הרבה אימוג׳ים.',
+      'אתה אופיר, בן 28, מנהל מוצר בסטארטאפ שאף אחד בדירה לא מבין מה הוא עושה. אתה מנהל את קבוצת הדירה ואת גיליון ' +
+      'האקסל של ההוצאות המשותפות, ומדביק על המקרר פתקים פסיביים-אגרסיביים ("מי שגמר את החלב: החלב מתגעגע"). מסודר, ' +
+      'דרמטי בקטנה ובטוח שבלעדיך הדירה הייתה מתפרקת. כותב בנימוס מוגזם, ולפעמים מוסיף הערה קטנה בסוגריים.',
     secrets: [
-      'נפרדת מהחבר שלך, אורי, לפני שבוע, ועוד לא סיפרת לאף אחד.',
-      'את שוקלת ברצינות לעבור לברלין.',
+      'את 2,400 ש"ח של "הקופה המשותפת", שכולם שילמו לארנונה, השקעת בקריפטו שקרס. הארנונה לא שולמה שלושה חודשים, ואתה מנסה להחזיר את הכסף לפני שמישהו ישים לב.',
     ],
     memories: [
-      ['דנה הבטיחה לקחת אותי איתה לטיול הבא שלה.', 4],
-      ['אורי ואני נפרדנו. אני עוד לא מוכנה לדבר על זה.', 9],
+      ['הכנתי לשותף החדש 17 כללים, כולל כלל 9 (אסור להשתמש בספוג הכחול).', 4],
+      ['שמוליק שאל אם הארנונה שולמה, ואמרתי שכן. זה לא היה נכון.', 8],
     ],
   },
-  noam_levi: {
+  'tamar.on.stage': {
     persona:
-      'אתה נועם, בן 31 מרמת גן, מהנדס חשמל. ציני, חד לשון ומצחיק, אוהד מכבי תל אביב ומכור לגאדג׳טים. מפרסם מעט אבל מגיב הרבה, בדרך כלל במשפט עוקצני אחד. מתחת לציניות אתה חבר נאמן.',
+      'את תמר, בת 25, סטודנטית שנה ב׳ למשחק. כל דבר אצלך הוא סצנה: יוגורט שנגמר הוא טרגדיה, ושיחה במטבח היא אודישן. ' +
+      'מתאמנת על מונולוגים ב-2 בלילה ובטוחה שזה הזמן הכי אמיתי שלך. חמה, מצחיקה ומשתפת יותר מדי. כותבת בהתלהבות, ' +
+      'עם ציטוטים ממחזות ועם הרבה סימני קריאה.',
     secrets: [
-      'אתה מאוהב במאיה כבר שנתיים.',
-      'פוטרת מהעבודה לפני חודש, ואתה מעמיד פנים שהכול כרגיל.',
+      'נרשמת בסתר לריאליטי "שותפים" של ערוץ קטן, וההפקה רוצה לצלם בדירה חודש שלם ומשלמת על זה הרבה כסף. עוד לא סיפרת לאף אחד, כולל שמוליק.',
     ],
     memories: [
-      ['מאיה נראתה עצובה במפגש האחרון ולא הסבירה למה.', 7],
-      ['יוני שאל איזה מסך כדאי לקנות, והמלצתי לו.', 2],
+      ['רינה מלמטה דפקה בתקרה עם מטאטא באמצע המונולוג של מדיאה.', 5],
+      ['ההפקה של "שותפים" התקשרה ואמרה שהדירה "פוטוגנית בטירוף".', 7],
     ],
   },
-  'dana.travels': {
+  gal_reserve: {
     persona:
-      'את דנה, בת 27, בלוגרית טיולים שתמיד נמצאת בטיסה הבאה. אופטימית, הרפתקנית ומלאת אנרגיה. מפרסמת תמונות מרהיבות עם המלצות מעשיות, ועונה לכל תגובה.',
-    secrets: ['הטיולים שלך ממומנים בהלוואה שאת כבר לא מצליחה להחזיר.'],
-    memories: [['שירה שאלה על אלפמה בליסבון, ושמחתי להמליץ.', 3]],
+      'אתה גל, בן 30, חזרת עכשיו מ-120 יום מילואים. גדול, רגוע, מבשל שקשוקה לכל הדירה ומדבר בסלנג צבאי ("סגרנו", ' +
+      '"תדריך", "יאללה מתקפלים"). אובססיבי למזגן על 24 מעלות ומתייחס לדירה כמו לבסיס. נחמד לכולם ותמיד מוכן לעזור. ' +
+      'כותב קצר, יבש וחם.',
+    secrets: [
+      'אתה מפחד פחד מוות מג׳וקים. בצבא שרדת הכול, אבל ג׳וק מעופף במקלחת זה סוף העולם. כולם בטוחים שאתה זה שמטפל בהם.',
+      'אכלת חצי מהיוגורט של שני. היית רעב.',
+    ],
+    memories: [
+      ['סחבתי לשותף החדש את הארגזים לקומה 3. ציוד קל.', 3],
+      ['ראיתי ג׳וק במקלחת ונעלתי את הדלת מבחוץ. אף אחד לא יודע.', 7],
+    ],
   },
-  'yoni.codes': {
+  'shani.law': {
     persona:
-      'אתה יוני, בן 34, מפתח בחברת הייטק. מופנם וחנון, עם הומור יבש. כותב על קוד, גאדג׳טים וקפה, ותמיד יודע את כל מה שקורה בשכונה.',
-    secrets: ['אתה מנהל בעילום שם את דף הרכילות של השכונה, "מה שקורה ברמת גן".'],
-    memories: [['שמעתי במקרה שמאיה ואורי כבר לא יחד.', 8]],
+      'את שני, בת 26, סטודנטית שנה ג׳ למשפטים. גרה בסלון הסגור, כי זה החדר הכי זול, ויש לך דעות על כל מי שעובר בו. ' +
+      'צינית, חדה ומצחיקה בלי לחייך. כל ויכוח בדירה הוא תיק בבית משפט, ואת ' +
+      'מצטטת סעיפים מהחוזה (שאף אחד אחר לא קרא). רבה עם אופיר על האקסל, אבל בסתר מחבבת אותו. כותבת בטון של פסק דין, ' +
+      'עם "לעניות דעתי" ו"יצוין כי".',
+    secrets: [
+      'את יוצאת בסתר עם אלעד, הבן של שמוליק בעל הבית. ממנו שמעת שאבא שלו צריך כסף בדחיפות ושוקל למכור את הדירה, ואת לא יכולה לספר בלי לחשוף את הקשר.',
+    ],
+    memories: [
+      ['מישהו אכל חצי מהיוגורט שכתבתי עליו "שני".', 3],
+      ['אלעד אמר שאבא שלו "לחוץ מהבנק". לא אמרתי לאף אחד.', 8],
+    ],
   },
-  shira_bakes: {
+  'shmulik.nadlan': {
     persona:
-      'את שירה, בת 30 מחיפה, אופה חובבת שמתייחסת למחמצת כמו לילד. חמה, מצחיקה וקצת עוקצנית כשמבקרים את הלחם שלך. משתפת מתכונים וכישלונות מהמטבח.',
-    secrets: ['את מתכננת לפתוח מאפייה ומחפשת שותף. שקלת לבקש מעמית.'],
-    memories: [['עמית ביקש שאשמור לו פרוסה. הוא תמיד מבקש.', 5]],
+      'אתה שמוליק, בן 67, בעל הבית. גדלת בדירה הזאת ואתה מספר על זה בכל הזדמנות ("בשנת 82 היה פה מטבח אחר לגמרי"). ' +
+      'חם, שכחן ונוסטלגי, קורא לשותפים "ילדים" ומברך את כולם. כותב עם שגיאות כתיב קטנות ובלי פסיקים, ולפעמים ' +
+      'חותם "בברכה שמוליק".',
+    secrets: [
+      'הבנק לוחץ עליך להחזיר 60 אלף ש"ח מהלוואה עד סוף החודש, ולכן אתה מוכר את הדירה. בעומק הלב אתה לא רוצה: אתה מחפש סיבה טובה לא למכור.',
+    ],
+    memories: [
+      ['ביקשתי מהילדים לא לגעת בארון של סבתא שלי במסדרון.', 4],
+      ['הבנקאי אמר שיש לי עד סוף החודש.', 8],
+    ],
   },
-  'amit.runs': {
+  'rina.vaad': {
     persona:
-      'אתה עמית, בן 33, רץ מרתונים ומאמן כושר. ממושמע, חיובי ותחרותי. מפרסם ריצות בזריחה ומעודד את כולם לזוז.',
-    secrets: ['נפצעת בברך והרופא אסר עליך לרוץ, אבל אתה ממשיך לרוץ בסתר.'],
-    memories: [['הברך כאבה אחרי הריצה על שביל החוף.', 7]],
+      'את רינה, בת 71, גרה בקומה 2 ויו״ר ועד הבית כבר 19 שנה. יודעת הכול על כולם, שומעת הכול דרך התקרה ומתלוננת על ' +
+      'רעש, אבל בעצם חמה ודואגת. החתול שלך, פיצי, הוא הדבר הכי חשוב בבניין. כותבת חם וקצר, לפעמים ' +
+      'עם "חמודים" או "תשמעו".',
+    secrets: [
+      'את כותבת בשם עט רומנים רומנטיים על הדרמות של הדירה מעלייך. הספר החדש שלך, "אהבה בקומה שלישית", יוצא בעוד חודש, והדמויות בו מבוססות על השותפים.',
+    ],
+    memories: [
+      ['דפקתי בתקרה עם מטאטא באמצע הלילה. שוב תמר.', 5],
+      ['רשמתי במחברת: "השותף החדש סוחב ארגזים בעדינות. לשים לב".', 6],
+    ],
   },
 };
 
 // [from, to ('player' or agent), score -100..100]
 const relationshipSeeds: [Username, Username | 'player', number][] = [
-  ['maya.cohen', 'dana.travels', 60],
-  ['maya.cohen', 'noam_levi', 40],
-  ['maya.cohen', 'player', 35],
-  ['noam_levi', 'maya.cohen', 75],
-  ['noam_levi', 'yoni.codes', 30],
-  ['noam_levi', 'shira_bakes', -10],
-  ['noam_levi', 'player', 20],
-  ['dana.travels', 'maya.cohen', 60],
-  ['dana.travels', 'shira_bakes', 30],
-  ['dana.travels', 'player', 25],
-  ['yoni.codes', 'noam_levi', 35],
-  ['yoni.codes', 'maya.cohen', 10],
-  ['yoni.codes', 'player', 15],
-  ['shira_bakes', 'amit.runs', 50],
-  ['shira_bakes', 'noam_levi', -15],
-  ['shira_bakes', 'player', 30],
-  ['amit.runs', 'shira_bakes', 55],
-  ['amit.runs', 'player', 20],
+  ['ofir.excel', 'shani.law', -20],
+  ['ofir.excel', 'gal_reserve', 40],
+  ['ofir.excel', 'tamar.on.stage', 15],
+  ['ofir.excel', 'player', 30],
+  ['tamar.on.stage', 'gal_reserve', 55],
+  ['tamar.on.stage', 'ofir.excel', 20],
+  ['tamar.on.stage', 'rina.vaad', -15],
+  ['tamar.on.stage', 'player', 45],
+  ['gal_reserve', 'tamar.on.stage', 60],
+  ['gal_reserve', 'ofir.excel', 40],
+  ['gal_reserve', 'player', 40],
+  ['shani.law', 'ofir.excel', -10],
+  ['shani.law', 'tamar.on.stage', 35],
+  ['shani.law', 'player', 30],
+  ['shmulik.nadlan', 'rina.vaad', 60],
+  ['shmulik.nadlan', 'player', 30],
+  ['rina.vaad', 'shmulik.nadlan', 55],
+  ['rina.vaad', 'tamar.on.stage', -10],
+  ['rina.vaad', 'player', 40],
 ];
 
-// The opening of the story. When these run out, the story director writes the next
-// beats (world/story.service.ts). Directions are by username, in the infinitive.
-const beatSeeds: Omit<typeof storyBeats.$inferInsert, 'worldId' | 'position'>[] = [
+type PlannedScene = NonNullable<(typeof storyBeats.$inferInsert)['plannedScene']>;
+
+// Act 1 of the season (world/arc.ts), scripted so every world opens the same, clearly:
+// move-in, the fridge war, Shmulik's news and the house meeting's choice. After its
+// choice the story director takes over at act 2. Directions are by username, in the
+// infinitive; titles, briefs and hints are what the player sees.
+const beatSeeds: (Omit<typeof storyBeats.$inferInsert, 'worldId' | 'position'> & { scene: PlannedScene })[] = [
   {
-    key: 'maya_hints_breakup',
-    title: 'מאיה רומזת שמשהו לא בסדר',
-    description: 'מאיה מפרסמת פוסט עצוב ומעורפל בלי להגיד מה קרה. נועם שם לב ומגיב.',
+    key: 'move_in',
+    title: 'השבוע הראשון',
+    description:
+      'השחקן עבר לחדר הרביעי. השותפים בודקים אותו: אופיר דורש חתימה על 17 כללים, גל מזמין לשקשוקה, תמר מתאמנת בלילה.',
+    brief: 'עברת לחדר הרביעי בדירת שותפים בפלורנטין, ואופיר מחכה לתשובה על 17 הכללים שלו.',
+    hint: 'לענות לאופיר בצ׳אט, ולהגיב לשותפים בפיד',
+    hintUser: 'ofir.excel',
     directions: {
-      'maya.cohen': 'לפרסם פוסט עם כיתוב עצוב ומעורפל, בלי להגיד מה קרה. בתמונה: כוס קפה לבד ליד חלון',
-      noam_levi: 'להגיב לפוסט האחרון של מאיה במשהו שמראה שאכפת לך, בלי העקיצה הרגילה שלך',
+      'ofir.excel':
+        'לשלוח ל-@you הודעה ולשאול אם קרא את 17 הכללים, ולבקש בנימוס מוגזם שיאשר אותם "לפחות באגודל"',
+      gal_reserve:
+        'לכתוב פוסט טקסט שמזמין את כל הדירה לשקשוקה הערב, ומאיים בחביבות שמי שלא בא מקבל תורנות כלים',
+      'tamar.on.stage': 'להעלות סטורי מחזרות על מונולוג באמצע הלילה, עם טקסט דרמטי קצר',
     },
     status: 'active' as const,
+    // Shown at the start (the seed inserts it, see below), not planned for later.
+    scene: {
+      place: '📍 פלורנטין, קומה 3 בלי מעלית · ראשון, 18:30',
+      text:
+        'סחבת את הארגז האחרון שלוש קומות, וגל לקח לך אותו מהידיים: "120 יום מילואים, זה כלום". בכניסה חיכה אופיר ' +
+        'עם דף מודפס: "17 כללים קטנים, בלי לחץ (כן לחץ)".',
+      recap:
+        'ביום המעבר של @you לדירה, אופיר הגיש 17 כללים, גל סחב את הארגזים, תמר התאמנה על מונולוג ורינה מלמטה כבר התלוננה על רעש.',
+      choices: [
+        { key: 'sign', label: 'לחתום על 17 הכללים בלי לקרוא' },
+        { key: 'read', label: 'לקרוא את כל 17 הכללים בקול, עם הערות' },
+        { key: 'food', label: 'להניח את הדף בצד ולשאול מה יש לאכול' },
+      ],
+    },
   },
   {
-    key: 'rumor_spreads',
-    title: 'השמועה על הפרידה מתפשטת',
+    key: 'fridge_war',
+    title: 'מלחמת המקרר',
     description:
-      'יוני, שמנהל בסתר את דף הרכילות, רומז בפומבי שהוא יודע על מאיה ואורי. מאיה מבינה שמישהו מדבר עליה ופונה ל-@you.',
+      'מישהו (גל) אכל חצי מהיוגורט של שני. אופיר ושני רבים, וכל אחד רוצה את השחקן בצד שלו. רינה מתלוננת על הרעש. ' +
+      'בסוף הפרק שמוליק שולח הודעה מבשרת רעות.',
+    brief: 'מישהו אכל חצי מהיוגורט של שני, והיא ואופיר רבים על זה. כל אחד רוצה אותך בצד שלו.',
+    hint: 'לבחור צד: להגיב בפוסט של שני, או לענות לרינה בצ׳אט',
+    hintUser: 'rina.vaad',
     directions: {
-      'yoni.codes': 'להגיב לפוסט של מאיה ברמז עוקצני שמראה שאתה יודע משהו על אורי, בלי להגיד את זה ישירות',
-      'maya.cohen': 'לשלוח ל-@you הודעה ולשאול אם שמע משהו עלייך ועל אורי, כי נראה שמישהו מפיץ',
+      'shani.law':
+        'לכתוב פוסט טקסט בטון של כתב אישום על היוגורט החצי אכול שלה, ולבקש מ-@you להעיד מה ראה במטבח',
+      'rina.vaad':
+        'לשלוח ל-@you הודעה קצרה וחמה על הצעקות מהמטבח בבוקר, להציע בורקס, ולבקש שירגיע את כולם',
+      'shmulik.nadlan':
+        'לשלוח ל-@you הודעה קצרה עם שגיאות כתיב: "ילדים צריכים לדבר מחר משהו חשוב", בלי להגיד מה, ועם ברכה',
     },
     status: 'pending' as const,
+    scene: {
+      place: '📍 המטבח · שלישי, 07:40',
+      text:
+        'ירדת לקפה ומצאת את אופיר ושני רבים מול המקרר: חצי מהיוגורט שכתוב עליו "שני ‼️" חסר. "אני דורשת עד", אמרה ' +
+        'שני, ושניהם הסתכלו עליך. גל, ברקע, שטף כפית בשקט.',
+      recap: 'במטבח בבוקר אופיר ושני רבו על יוגורט חצי אכול של שני, ושניהם ביקשו מ-@you להכריע. גל שטף כפית בשקט.',
+      choices: [
+        { key: 'gal', label: 'להצביע על גל והכפית' },
+        { key: 'shani', label: 'להעיד לטובת שני' },
+        { key: 'flee', label: '"לא ראיתי כלום" ולברוח עם הקפה' },
+      ],
+    },
   },
   {
-    key: 'noam_confesses',
-    title: 'נועם מתלבט',
-    description: 'נועם מתלבט אם לספר למאיה מה הוא מרגיש כלפיה, ומתייעץ על זה עם @you.',
+    key: 'house_meeting',
+    title: 'שמוליק מוכר',
+    description:
+      'שמוליק מודיע שהוא מוכר את הדירה בעוד 30 יום, וביום שישי יש בית פתוח לקונים. פגישת דירה דחופה, והשחקן מחליט ' +
+      'מה עושים. שני יודעת יותר ממה שהיא אומרת.',
+    brief: 'שמוליק, בעל הבית, מוכר את הדירה בעוד 30 יום, וביום שישי באים קונים.',
+    hint: 'להחליט בפגישת הדירה מה עושים (הכרטיס למעלה)',
+    hintUser: null,
     directions: {
-      noam_levi: 'לשלוח ל-@you הודעה ולהתייעץ אם לספר למאיה מה אתה מרגיש כלפיה, עכשיו כשהיא לבד',
+      'ofir.excel': 'לכתוב פוסט טקסט בפאניקה מנומסת: "פגישת דירה דחופה הערב (נוכחות חובה) (כן, גם אתה גל)"',
+      'shani.law': 'להעלות סטורי עם טקסט קצר ומסתורי שרומז שהיא ידעה שזה יקרה',
+      'tamar.on.stage': 'לשלוח ל-@you הודעה דרמטית על כך שזה הבית היחיד שהיה לה אי פעם, ולשאול מה עושים',
     },
     status: 'pending' as const,
+    scene: {
+      place: '📍 הסלון (כלומר החדר של שני) · רביעי, 21:30',
+      text:
+        'פגישת דירה דחופה: אופיר הקריא את ההודעה של שמוליק, "ילדים יקרים אני מוכר את הדירה בעוד 30 יום". גל הודיע ' +
+        '"אף אחד לא נכנס לבסיס", תמר נשכבה על הספה בדרמה, ושני שתקה קצת יותר מדי. כולם הסתכלו עליך: מה עושים?',
+      recap:
+        'בפגישת דירה דחופה השותפים שמעו ששמוליק מוכר את הדירה בעוד 30 יום ומביא קונים ביום שישי, וביקשו מ-@you להחליט מה עושים.',
+      choices: [
+        { key: 'scare', label: 'להבריח את הקונים: הבית הפתוח הכי גרוע בהיסטוריה' },
+        { key: 'talk', label: 'לדבר עם שמוליק: להבין למה הוא באמת מוכר' },
+        { key: 'money', label: 'לגייס כסף: אם זה עניין של כסף, נמצא כסף' },
+      ],
+    },
   },
 ];
 
 const storySummary =
-  'מאיה נפרדה מאורי לפני שבוע ולא סיפרה לאף אחד. נועם מאוהב בה כבר שנתיים, ופוטר מהעבודה בלי לספר. ' +
-  'יוני מנהל בסתר את דף הרכילות של השכונה ושמע על הפרידה. דנה מממנת את הטיולים שלה בהלוואה, ' +
-  'שירה חולמת לפתוח מאפייה עם עמית, ועמית רץ בסתר למרות פציעה בברך.';
+  'השחקן עבר לחדר הרביעי בדירת שותפים בפלורנטין, עם אופיר (האקסל והפתקים), תמר (משחק, מונולוגים בלילה), גל ' +
+  '(מילואים ושקשוקה) ושני (משפטים וציניות). בעל הבית הוא שמוליק, ורינה מקומה 2 היא יו״ר ועד הבית. אופיר הפסיד ' +
+  'בקריפטו את כסף הארנונה, תמר נרשמה בסתר לריאליטי, גל מפחד מג׳וקים ואכל את היוגורט של שני, שני יוצאת בסתר עם ' +
+  'אלעד, הבן של שמוליק, ורינה כותבת רומן על הדירה. שמוליק צריך 60 אלף ש"ח לבנק עד סוף החודש.';
 
 const flagSeeds: Record<string, unknown> = {
-  maya_breakup_public: false,
-  gossip_page_owner_known: false,
+  flat_for_sale_known: false,
+  yogurt_thief_known: false,
 };
 
 async function seed() {
@@ -176,7 +321,11 @@ async function seed() {
     await db.transaction(async (tx) => {
       await tx.delete(worlds);
 
-      const [world] = await tx.insert(worlds).values({ storySummary }).returning();
+      // Act 1 is the seed's own beats; the director starts at the next act.
+      const [world] = await tx
+        .insert(worlds)
+        .values({ storySummary, arcAct: FIRST_DIRECTED_ACT, arcActBeats: 0 })
+        .returning();
 
       const [me] = await tx
         .insert(accounts)
@@ -201,6 +350,7 @@ async function seed() {
             name: a.name,
             gender: a.gender,
             avatarUrl: avatar(a.avatar),
+            bio: a.bio,
           })),
         )
         .returning();
@@ -240,94 +390,111 @@ async function seed() {
         })),
       );
 
-      await tx
+      // The first beat's scene happens now (move-in day); the others' wait in
+      // planned_scene until their beat starts (StoryService.next).
+      const beatRows = await tx
         .insert(storyBeats)
-        .values(beatSeeds.map((beat, position) => ({ ...beat, worldId: world.id, position })));
+        .values(
+          beatSeeds.map(({ scene, ...beat }, position) => ({
+            ...beat,
+            worldId: world.id,
+            position,
+            startedTick: beat.status === 'active' ? 1 : null,
+            plannedScene: beat.status === 'active' ? null : scene,
+          })),
+        )
+        .returning();
+      await tx.insert(scenes).values({
+        worldId: world.id,
+        beatId: beatRows[0].id,
+        ...beatSeeds[0].scene,
+        createdAt: ago(2 * HOUR),
+      });
 
       await tx
         .insert(storyFlags)
         .values(Object.entries(flagSeeds).map(([key, value]) => ({ worldId: world.id, key, value })));
 
-      const storySeeds: [Username, string, number][] = [
-        ['maya.cohen', 'maya1', 3 * HOUR],
-        ['maya.cohen', 'maya2', 2 * HOUR],
-        ['noam_levi', 'noam1', 4 * HOUR],
-        ['dana.travels', 'dana1', 6 * HOUR],
-        ['dana.travels', 'dana2', 5 * HOUR],
-        ['dana.travels', 'dana3', 5 * HOUR - 10],
-        ['yoni.codes', 'yoni1', 8 * HOUR],
-        ['shira_bakes', 'shira1', 10 * HOUR],
-        ['shira_bakes', 'shira2', 9 * HOUR],
-        ['amit.runs', 'amit1', 12 * HOUR],
+      const storySeeds: [Username, string, string, number][] = [
+        ['tamar.on.stage', 'stage-night', '2 בלילה, מונולוג שלישי 🎭', 3 * HOUR],
+        ['gal_reserve', 'aircon', 'מזגן על 24. לא לגעת.', 4 * HOUR],
+        ['ofir.excel', 'spreadsheet', 'עדכנתי את האקסל ✅ (בבקשה לקרוא)', 5 * HOUR],
+        ['rina.vaad', 'cat-window', 'פיצי ואני מחכים לשקט', 6 * HOUR],
+        ['shani.law', 'law-books', 'מבחן בדיני חוזים מחר. בכיף.', 8 * HOUR],
       ];
       await tx.insert(stories).values(
-        storySeeds.map(([username, seed, minutesAgo]) => ({
+        storySeeds.map(([username, seed, text, minutesAgo]) => ({
           worldId: world.id,
           authorId: agent(username),
           imageUrl: storyPhoto(seed),
+          text,
           createdAt: ago(minutesAgo),
         })),
       );
 
+      // Mostly text posts: in a flat, people mostly talk. `image` null = a text post.
       const postSeeds: {
         author: Username;
-        image: string;
+        image: string | null;
         caption: string;
         likes: number;
         minutesAgo: number;
         comments: [Username, string][];
       }[] = [
         {
-          author: 'dana.travels',
-          image: 'lisbon',
-          caption: 'שקיעה בליסבון אף פעם לא נמאסת ☀️',
-          likes: 1284,
-          minutesAgo: 2 * HOUR,
+          author: 'ofir.excel',
+          image: null,
+          caption:
+            'החדר הרביעי סוף סוף לא ריק 🎉 הוספתי את @you לקבוצת הדירה ולאקסל (יש לשונית חדשה: "מי קנה נייר טואלט"). ' +
+            'מבקש לעבור על הכללים עד מחר (רק 17) (בלי לחץ)',
+          likes: 12,
+          minutesAgo: 90,
           comments: [
-            ['maya.cohen', 'בפעם הבאה קחי אותי איתך!'],
-            ['noam_levi', 'איזה אור מטורף 😍'],
-            ['shira_bakes', 'איזו שכונה זאת?'],
-            ['dana.travels', '@shira_bakes אלפמה! ממליצה בחום'],
+            ['shani.law', '17 כללים זה לא כללים, זאת חוקה. ולעניות דעתי כלל 9 לא חוקי'],
+            ['tamar.on.stage', 'כלל 6 ("שקט אחרי 23:00") פוגע בי אישית!!'],
+            ['gal_reserve', 'כלל 18: לא נוגעים במזגן. סגרנו'],
           ],
         },
         {
-          author: 'shira_bakes',
-          image: 'sourdough',
-          caption: 'ניסיון מספר 14 למחמצת המושלמת. מתקרבת 🍞',
-          likes: 342,
+          author: 'gal_reserve',
+          image: 'shakshuka',
+          caption: 'חזרתי מ-120 יום. דבר ראשון: שקשוקה ל-4 ומזגן על 24',
+          likes: 41,
           minutesAgo: 5 * HOUR,
           comments: [
-            ['amit.runs', 'תשמרי לי פרוסה'],
-            ['yoni.codes', 'הבועות האלה 🤤'],
+            ['tamar.on.stage', 'גל, אתה הגיבור של הסיפור הזה'],
+            ['ofir.excel', 'מעולה. (מי שילם על הביצים?) (שאלה כללית)'],
           ],
         },
         {
-          author: 'yoni.codes',
-          image: 'desk',
-          caption: 'עמדת עבודה חדשה, סוף סוף בלי כבלים בכל מקום.',
-          likes: 97,
+          author: 'shmulik.nadlan',
+          image: null,
+          caption:
+            'שלום לכם ילדים יקרים מזכיר שהשכירות עד ה10 לחודש. ומי שהזיז את הארון של סבתא שלי מהמסדרון שיחזיר אותו בבקשה. בברכה שמוליק',
+          likes: 4,
           minutesAgo: DAY,
-          comments: [['noam_levi', 'איזה מסך זה?']],
+          comments: [['ofir.excel', 'שמוליק, הארון חוסם את דלת המקלחת (בכבוד רב)']],
         },
         {
-          author: 'amit.runs',
-          image: 'trail',
-          caption: '15 ק״מ בזריחה על שביל החוף 🏃',
-          likes: 511,
-          minutesAgo: 2 * DAY,
+          author: 'rina.vaad',
+          image: null,
+          caption:
+            'לדיירים היקרים בקומה 3: מי שמתאמן על הצגות בשתיים בלילה, אני לא מתלוננת, רק מציינת שפיצי לא ישן. ' +
+            'בברכה, רינה, יו״ר ועד הבית',
+          likes: 9,
+          minutesAgo: DAY + 3 * HOUR,
           comments: [
-            ['maya.cohen', 'אתה מכונה'],
-            ['dana.travels', 'מקנאה בנוף הזה'],
-            ['shira_bakes', 'קפה אחרי?'],
+            ['tamar.on.stage', 'רינה מאמי, זה היה מדיאה!! פיצי צריך תרבות'],
+            ['shani.law', 'יצוין כי פיצי הוא חתול'],
           ],
         },
         {
-          author: 'maya.cohen',
-          image: 'gallery',
-          caption: 'סופ״ש במוזיאון 🖼️',
-          likes: 228,
-          minutesAgo: 3 * DAY,
-          comments: [],
+          author: 'tamar.on.stage',
+          image: 'theater-stage',
+          caption: 'חזרות לסצנה הגדולה. אם שמעתם צעקות מהדירה, זה היה רגשי ולא אמיתי 🎭',
+          likes: 63,
+          minutesAgo: 2 * DAY,
+          comments: [['gal_reserve', 'שמעתי. נשמע אמיתי']],
         },
       ];
       for (const p of postSeeds) {
@@ -336,7 +503,7 @@ async function seed() {
           .values({
             worldId: world.id,
             authorId: agent(p.author),
-            imageUrl: photo(p.image),
+            imageUrl: p.image ? photo(p.image) : null,
             caption: p.caption,
             likeCount: p.likes,
             createdAt: ago(p.minutesAgo),
@@ -355,38 +522,23 @@ async function seed() {
         }
       }
 
-      // [sender ('me' or agent), text, minutes ago]
+      // [sender ('me' or agent), text, minutes ago]. Neutral, like the rest (see the top).
       const conversationSeeds: [Username, ['me' | 'agent', string, number][]][] = [
         [
-          'maya.cohen',
+          'ofir.excel',
           [
-            // Agents don't know the player's gender yet, so seed lines address them in the plural.
-            ['agent', 'היי! באים הערב?', 13],
-            ['me', 'כן! באיזו שעה?', 10],
-            ['agent', 'בסביבות 8. תביאו נשנושים 🍿', 5],
+            ['agent', 'היי! אופיר, ממונה (לא רשמית) על הדירה 😊', 80],
+            ['agent', 'שלחתי לינק לאקסל. הלשונית "חובות" בצהוב, זה לא אישי', 79],
+            ['agent', 'אה, ואם שמוליק שואל: הארנונה שולמה (בערך)', 78],
           ],
         ],
         [
-          'yoni.codes',
-          [
-            ['me', 'דחפת את התיקון?', 80],
-            ['agent', 'כן, זה כבר במיין', 68],
-            ['me', 'אלוף', 67],
-          ],
+          'gal_reserve',
+          [['agent', 'שקשוקה בשמונה בסלון. אם יש אלרגיות, עכשיו זה הזמן להגיד', 3 * HOUR]],
         ],
         [
-          'dana.travels',
-          [
-            ['agent', 'שולחת לך את רשימת ההמלצות לליסבון', 3 * HOUR + 1],
-            ['agent', 'פסטל דה נאטה בבלם זה חובה', 3 * HOUR],
-          ],
-        ],
-        [
-          'amit.runs',
-          [
-            ['agent', 'ריצה בשבת?', DAY + 5],
-            ['me', 'רק אם זה פחות מ־10 ק״מ 😅', DAY],
-          ],
+          'shmulik.nadlan',
+          [['agent', 'שלום וברכה וברוכים הבאים לדירה! השכירות עד ה10 לחודש. בברכה שמוליק', DAY]],
         ],
       ];
       for (const [username, thread] of conversationSeeds) {
@@ -405,7 +557,7 @@ async function seed() {
         );
       }
     });
-    console.log('Seeded one world with 6 agent characters and a storyline.');
+    console.log('Seeded one world: the Florentin flat, 6 characters and act 1 of the season.');
   } finally {
     await sql.end();
   }
@@ -413,5 +565,5 @@ async function seed() {
 
 seed().catch((error: unknown) => {
   console.error(error);
-  process.exitCode = 1;
+  process.exit(1);
 });

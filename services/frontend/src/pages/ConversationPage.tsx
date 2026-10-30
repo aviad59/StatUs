@@ -1,13 +1,15 @@
 import { ChevronRight } from 'lucide-react'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { Link, useFetcher, useLoaderData, useParams } from 'react-router'
 import { type replyAction, usePendingTexts } from '@/actions.ts'
 import { Avatar } from '@/components/Avatar.tsx'
 import { DmCounter } from '@/components/DmCounter.tsx'
 import { TextForm } from '@/components/TextForm.tsx'
+import { UserLink } from '@/components/UserLink.tsx'
 import { clockTime, timeAgo } from '@/format.ts'
 import type { conversationLoader } from '@/loaders.ts'
 import type { Conversation, Message, User, WorldStatus } from '@/types.ts'
+import { useVisualViewport } from '@/viewport.ts'
 import { NotFoundPage } from './NotFoundPage.tsx'
 
 const bubble = 'max-w-[75%] rounded-2xl px-3 py-2 text-sm'
@@ -33,21 +35,29 @@ function ConversationView({ conversation, world }: { conversation: Conversation;
   const pending = usePendingTexts(sendAction)
   const { online, typing } = useAgentReply(conversation, pending.length > 0)
   useMarkRead(conversation)
-  const endRef = useRef<HTMLDivElement>(null)
-
-  const messageCount = conversation.messages.length + pending.length
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ block: 'end' })
-  }, [messageCount, typing])
+  const viewport = useVisualViewport()
+  const { listRef, contentRef, onScroll, stick } = useStickToBottom([
+    conversation.messages.length + pending.length,
+    typing,
+    viewport.height,
+  ])
 
   const lastActive = conversation.messages.findLast((m) => !m.fromMe)?.createdAt
 
   return (
-    <div className="flex min-h-[calc(100dvh-3.5rem)] flex-col">
-      <header className="sticky top-0 flex items-center gap-3 border-b border-neutral-200 bg-white px-2 py-2 dark:border-neutral-800 dark:bg-neutral-950">
+    // Sized to the visible screen, not the page: when the keyboard opens, the whole chat
+    // shrinks above it (input included) instead of the keyboard covering the messages.
+    // Only the message list scrolls; RootLayout hides the bottom nav here.
+    <div
+      className="fixed inset-x-0 mx-auto flex max-w-md flex-col bg-white sm:border-x sm:border-neutral-200 dark:bg-neutral-950 sm:dark:border-neutral-800"
+      style={{ top: viewport.offsetTop, height: viewport.height }}
+    >
+      <header className="flex shrink-0 items-center gap-3 border-b border-neutral-200 bg-white px-2 py-2 dark:border-neutral-800 dark:bg-neutral-950">
         <Link to="/messages" aria-label="חזרה">
           <ChevronRight size={28} />
         </Link>
+        {/* Tapping who you're talking to opens their profile. */}
+        <UserLink user={conversation.user} className="flex items-center gap-3">
         <span className="relative">
           <Avatar src={conversation.user.avatarUrl} alt={conversation.user.username} />
           {online && (
@@ -62,9 +72,23 @@ function ConversationView({ conversation, world }: { conversation: Conversation;
             lastActive && <p className="text-xs text-neutral-500">פעילות {timeAgo(lastActive)}</p>
           )}
         </div>
+        </UserLink>
       </header>
 
-      <ul className="flex flex-1 flex-col gap-1.5 p-3">
+      <div ref={listRef} onScroll={onScroll} className="min-h-0 flex-1 overflow-y-auto overscroll-contain">
+      {conversation.messages.length === 0 && pending.length === 0 && (
+        // A new chat (opened from a profile): say who they are and nudge a first message.
+        <div className="flex flex-col items-center gap-2 px-6 pt-10 text-center">
+          <Avatar src={conversation.user.avatarUrl} alt={conversation.user.username} size={80} />
+          <p className="font-semibold">{conversation.user.name}</p>
+          <p className="text-sm text-neutral-500">
+            עוד לא דיברתם. {conversation.user.gender === 'female' ? 'היא תענה' : 'הוא יענה'} מיד, אז אפשר לשאול מה
+            קורה, לרכל, או לשאול על משהו שראית בפיד.
+          </p>
+        </div>
+      )}
+
+      <ul ref={contentRef} className="flex flex-col gap-1.5 p-3">
         {conversation.messages.map((message) => (
           <li
             key={message.id}
@@ -101,14 +125,61 @@ function ConversationView({ conversation, world }: { conversation: Conversation;
           </li>
         )}
       </ul>
-      <div ref={endRef} />
+      </div>
 
-      <div className="sticky bottom-14 bg-white p-3 dark:bg-neutral-950">
+      <div
+        className="shrink-0 border-t border-neutral-200 bg-white p-3 pb-[max(0.75rem,env(safe-area-inset-bottom))] dark:border-neutral-800 dark:bg-neutral-950"
+        // Sending always brings you back to the newest message, even if you'd scrolled up.
+        onSubmit={stick}
+      >
         <DmCounter world={world} sending={pending.length} />
         <TextForm action={sendAction} placeholder="הודעה..." submitLabel="שליחה" />
       </div>
     </div>
   )
+}
+
+// Within this many px of the bottom counts as "reading the newest messages".
+const NEAR_BOTTOM_PX = 80
+
+/**
+ * Keeps a scrolling list at its newest item when something changes (a message
+ * arrives, the typing bubble shows, the keyboard opens), but only while the user is
+ * already at the bottom: if they've scrolled up to read, it stays where they are.
+ */
+function useStickToBottom(changes: unknown[]) {
+  const listRef = useRef<HTMLDivElement>(null)
+  // Starts stuck, so the chat opens at its newest message.
+  const atBottom = useRef(true)
+
+  const onScroll = () => {
+    const el = listRef.current
+    if (el) atBottom.current = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX
+  }
+  const stick = () => {
+    atBottom.current = true
+  }
+
+  const pin = () => {
+    const el = listRef.current
+    if (el && atBottom.current) el.scrollTop = el.scrollHeight
+  }
+
+  // Layout effect: scrolls before the frame is painted, so nothing visibly jumps.
+  // eslint-disable-next-line react-hooks/exhaustive-deps -- re-run when any tracked value changes
+  useLayoutEffect(pin, changes)
+
+  // Content that grows later (a story thumbnail finishing loading) keeps it pinned too.
+  const contentRef = useRef<HTMLUListElement>(null)
+  useEffect(() => {
+    if (!contentRef.current) return
+    const observer = new ResizeObserver(pin)
+    observer.observe(contentRef.current)
+    return () => observer.disconnect()
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- pin only reads refs
+  }, [])
+
+  return { listRef, contentRef, onScroll, stick }
 }
 
 /** The story a message replies to, as a small thumbnail above it. */

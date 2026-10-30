@@ -85,6 +85,34 @@
       "when": 1793088384511,
       "tag": "20261027080624_text_posts_story_replies",
       "breakpoints": true
+    },
+    {
+      "idx": 12,
+      "version": "7",
+      "when": 1793260294820,
+      "tag": "20261029075134_account_bio",
+      "breakpoints": true
+    },
+    {
+      "idx": 13,
+      "version": "7",
+      "when": 1793265716840,
+      "tag": "20261029092156_story_arc_scenes",
+      "breakpoints": true
+    },
+    {
+      "idx": 14,
+      "version": "7",
+      "when": 1793278028430,
+      "tag": "20261029124708_story_chapters",
+      "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1793281722840,
+      "tag": "20261029134842_player_stats",
+      "breakpoints": true
     }
   ]
 }

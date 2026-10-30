@@ -42,8 +42,34 @@ export const worlds = pgTable('worlds', {
   // The story so far, kept up to date by the story director (world/story.service.ts).
   // Omniscient (it includes everyone's secrets), so it never goes into agent prompts.
   storySummary: text('story_summary').notNull().default(''),
+  // Where the season's storyline is (world/arc.ts): the current act (an index into
+  // ARC.acts; past the end once the season is over) and how many beats it has had.
+  arcAct: integer('arc_act').notNull().default(0),
+  arcActBeats: integer('arc_act_beats').notNull().default(0),
   createdAt: createdAt(),
 }).enableRLS();
+
+// The human player's stats (one row per world, since each world has one human).
+// Every player action nudges them; see stats/score.ts.
+export const playerStats = pgTable(
+  'player_stats',
+  {
+    worldId: uuid('world_id')
+      .primaryKey()
+      .references(() => worlds.id, { onDelete: 'cascade' }),
+    aura: smallint('aura').notNull().default(50),
+    humor: smallint('humor').notNull().default(50),
+    drama: smallint('drama').notNull().default(50),
+    // What the last action changed: { aura, humor, drama, reason }.
+    lastChange: jsonb('last_change').$type<{ aura: number; humor: number; drama: number; reason: string }>(),
+    updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    check('player_stats_aura_range', sql`${t.aura} between 0 and 100`),
+    check('player_stats_humor_range', sql`${t.humor} between 0 and 100`),
+    check('player_stats_drama_range', sql`${t.drama} between 0 and 100`),
+  ],
+).enableRLS();
 
 export const accountKind = pgEnum('account_kind', ['human', 'agent']);
 
@@ -64,6 +90,8 @@ export const accounts = pgTable(
     username: text('username').notNull(),
     name: text('name').notNull(),
     avatarUrl: text('avatar_url').notNull(),
+    // The public bio on the profile page. Unlike the persona, anyone may read it.
+    bio: text('bio').notNull().default(''),
     createdAt: createdAt(),
   },
   (t) => [unique().on(t.worldId, t.username)],
@@ -254,9 +282,22 @@ export const storyBeats = pgTable(
       .references(() => worlds.id, { onDelete: 'cascade' }),
     // Stable identifier for code and flags, e.g. 'maya_reveals_breakup'.
     key: text('key').notNull(),
+    // Shown to the player as the chapter's name, so it never gives a secret away.
     title: text('title').notNull(),
     // What happens. For the story director only; agents get just their own direction.
     description: text('description').notNull(),
+    // For the player (the "story right now" card): what's going on, as far as they know,
+    // in plain words, and what they can do now (`hintUser`: whom to talk to, by username).
+    brief: text('brief'),
+    hint: text('hint'),
+    hintUser: text('hint_user'),
+    // A scene written in advance (seeded beats): it's shown when the beat starts.
+    plannedScene: jsonb('planned_scene').$type<{
+      place: string;
+      text: string;
+      recap: string;
+      choices: { key: string; label: string }[];
+    }>(),
     // What each character does in this beat, by username, e.g. { "noam_levi": "לשלוח ל-@you
     // הודעה ולהתייעץ..." }. The beat is done once each of them has acted (actedBy).
     directions: jsonb('directions').$type<Record<string, string>>().notNull().default({}),
@@ -269,6 +310,35 @@ export const storyBeats = pgTable(
     completedAt: timestamp('completed_at', { withTimezone: true }),
   },
   (t) => [unique().on(t.worldId, t.key), index().on(t.worldId, t.position)],
+).enableRLS();
+
+// "Meanwhile, in real life": what happens off the network, narrated to the player, who
+// is there too (the emergency meeting, the road trip). The story director writes one
+// with a beat. It may end with a choice for the player, which steers the next beat.
+export const scenes = pgTable(
+  'scenes',
+  {
+    id: id(),
+    worldId: uuid('world_id')
+      .notNull()
+      .references(() => worlds.id, { onDelete: 'cascade' }),
+    // The beat it opens; a choice here ends that beat early (StoryService.choose).
+    beatId: uuid('beat_id').references(() => storyBeats.id, { onDelete: 'set null' }),
+    // Where and when, e.g. "📍 הסלון של מאיה, תל אביב · חמישי, 23:40".
+    place: text('place').notNull(),
+    // To the player, in the second person: what they see and hear there.
+    text: text('text').notNull(),
+    // The same in one third-person sentence, for the characters' prompts.
+    recap: text('recap').notNull(),
+    imageUrl: text('image_url'),
+    imageDescription: text('image_description'),
+    // [{ key, label }]; empty when there's nothing to choose.
+    choices: jsonb('choices').$type<{ key: string; label: string }[]>().notNull().default([]),
+    chosen: text('chosen'),
+    chosenAt: timestamp('chosen_at', { withTimezone: true }),
+    createdAt: createdAt(),
+  },
+  (t) => [index().on(t.worldId, t.createdAt)],
 ).enableRLS();
 
 // Facts about the world's story so far, e.g. player_knows_secret = true.
@@ -317,6 +387,10 @@ export const postsRelations = relations(posts, ({ one, many }) => ({
 export const commentsRelations = relations(comments, ({ one }) => ({
   post: one(posts, { fields: [comments.postId], references: [posts.id] }),
   author: one(accounts, { fields: [comments.authorId], references: [accounts.id] }),
+}));
+
+export const scenesRelations = relations(scenes, ({ one }) => ({
+  beat: one(storyBeats, { fields: [scenes.beatId], references: [storyBeats.id] }),
 }));
 
 export const storiesRelations = relations(stories, ({ one }) => ({

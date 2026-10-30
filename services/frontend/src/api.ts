@@ -12,8 +12,25 @@ export class ApiError extends Error {
   }
 }
 
+// Reads are retried once after this long on a network error or a server error: a
+// single dropped request shouldn't turn the whole app into the error page. Writes
+// aren't, since sending one twice could post twice.
+const READ_RETRY_MS = 800
+
+async function fetchWithRetry(url: string, init?: RequestInit): Promise<Response> {
+  const isRead = !init?.method || init.method === 'GET'
+  const retry = () => new Promise((resolve) => setTimeout(resolve, READ_RETRY_MS)).then(() => fetch(url, init))
+  try {
+    const response = await fetch(url, init)
+    return isRead && response.status >= 500 ? await retry() : response
+  } catch (error) {
+    if (!isRead || init?.signal?.aborted) throw error
+    return retry()
+  }
+}
+
 export async function api<T>(path: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(`/api${path}`, init)
+  const response = await fetchWithRetry(`/api${path}`, init)
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as { code?: string } | null
     throw new ApiError(response.status, init?.method ?? 'GET', path, body?.code)

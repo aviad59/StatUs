@@ -33,7 +33,9 @@ export class CloudflareImageProvider implements ImageProvider {
     const body = (await response.json().catch(() => null)) as CloudflareRunResponse | null;
     const image = body?.result?.image;
     if (!response.ok || !image) {
-      const reason = body?.errors?.map((e) => e.message).join('; ') || `HTTP ${response.status}`;
+      const reason =
+        body?.errors?.map((e) => e.message).join('; ') ||
+        (body ? `HTTP ${response.status}, no image in the response` : `HTTP ${response.status}, unreadable response body`);
       throw new Error(`Cloudflare image generation failed: ${reason}`);
     }
     return Buffer.from(image, 'base64');

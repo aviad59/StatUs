@@ -8,12 +8,14 @@ import type { Post } from '@/types.ts'
 import { Avatar } from './Avatar.tsx'
 import { CommentsSheet } from './CommentsSheet.tsx'
 import { TextForm } from './TextForm.tsx'
+import { UserLink } from './UserLink.tsx'
 
 const PREVIEW_COMMENTS = 2
 // Two taps on the photo (or a text post's text) within this window count as a double tap.
 const DOUBLE_TAP_MS = 300
 
-export function PostCard({ post }: { post: Post }) {
+/** `isNew`: the post came from the tick the user just ran, so it gets a "new" tag. */
+export function PostCard({ post, isNew = false }: { post: Post; isNew?: boolean }) {
   const [sheetOpen, setSheetOpen] = useState(false)
   const currentUser = useCurrentUser()
   const commentAction = `/actions/posts/${post.id}/comments`
@@ -38,10 +40,18 @@ export function PostCard({ post }: { post: Post }) {
   }
 
   return (
-    <article className="pb-4">
+    // The id lets the feed scroll here from "what just happened" (WorldBar).
+    <article id={`post-${post.id}`} className="scroll-mt-2 pb-4">
       <header className="flex items-center gap-2 px-3 py-2">
-        <Avatar src={post.author.avatarUrl} alt={post.author.username} />
-        <span className="text-sm font-semibold">{post.author.username}</span>
+        <UserLink user={post.author} className="flex items-center gap-2">
+          <Avatar src={post.author.avatarUrl} alt={post.author.username} />
+          <span className="text-sm font-semibold">{post.author.username}</span>
+        </UserLink>
+        {isNew && (
+          <span className="rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold text-amber-700 dark:bg-amber-400/15 dark:text-amber-300">
+            חדש
+          </span>
+        )}
       </header>
 
       {/* touch-action: manipulation stops the browser treating a double tap as zoom. */}
@@ -85,7 +95,10 @@ export function PostCard({ post }: { post: Post }) {
         <p className="font-semibold">{likes.toLocaleString('he-IL')} לייקים</p>
         {post.imageUrl && (
           <p>
-            <span className="font-semibold">{post.author.username}</span> {post.caption}
+            <UserLink user={post.author} className="font-semibold">
+              {post.author.username}
+            </UserLink>{' '}
+            {post.caption}
           </p>
         )}
         {post.comments.length > PREVIEW_COMMENTS && (
@@ -96,7 +109,10 @@ export function PostCard({ post }: { post: Post }) {
         <ul className="space-y-0.5">
           {comments.map((comment) => (
             <li key={comment.id}>
-              <span className="font-semibold">{comment.author.username}</span> {comment.text}
+              <UserLink user={comment.author} className="font-semibold">
+                {comment.author.username}
+              </UserLink>{' '}
+              {comment.text}
             </li>
           ))}
           {!sheetOpen &&

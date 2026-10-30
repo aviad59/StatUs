@@ -3,7 +3,8 @@ interface AvatarProps {
   alt: string
   /** Pixels, or 'fill' to take the parent's width. */
   size?: number | 'fill'
-  ring?: boolean
+  /** A story ring: colored for unwatched stories, grey ('seen') once watched. */
+  ring?: boolean | 'seen'
 }
 
 export function Avatar({ src, alt, size = 32, ring = false }: AvatarProps) {
@@ -21,7 +22,13 @@ export function Avatar({ src, alt, size = 32, ring = false }: AvatarProps) {
   if (!ring) return img
 
   return (
-    <span className="block rounded-full bg-gradient-to-tr from-amber-400 via-pink-500 to-purple-600 p-[2px]">
+    <span
+      className={`block rounded-full p-[2px] ${
+        ring === 'seen'
+          ? 'bg-neutral-300 dark:bg-neutral-700'
+          : 'bg-gradient-to-tr from-amber-400 via-pink-500 to-purple-600'
+      }`}
+    >
       <span className="block rounded-full bg-white p-[2px] dark:bg-neutral-950">{img}</span>
     </span>
   )

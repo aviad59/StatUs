@@ -1,13 +1,22 @@
 import { ConflictException, Inject, Injectable, NotFoundException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import type { Conversation, ConversationSummary, Message, StoryReplyResult, TickErrorCode } from '@status/shared';
+import type {
+  Conversation,
+  ConversationSummary,
+  Message,
+  StartConversationResult,
+  StoryReplyResult,
+  TickErrorCode,
+} from '@status/shared';
 import { and, asc, desc, eq, gt, sql } from 'drizzle-orm';
 import { toUser } from '../accounts/to-user';
 import type { Db } from '../db/client';
 import { DB } from '../db/db.module';
-import { type accounts, conversations, messages, stories, worlds } from '../db/schema';
+import { accounts, conversations, messages, stories, worlds } from '../db/schema';
+import { StatsService } from '../stats/stats.service';
 import { AgentService } from '../world/agent.service';
 import { currentEnergy, energyConfig, type EnergyConfig, spendOne } from '../world/energy';
+import { WorldChanges } from '../world/world-changes';
 
 type Me = { id: string; worldId: string };
 
@@ -35,6 +44,8 @@ export class ConversationsService {
   constructor(
     @Inject(DB) private readonly db: Db,
     private readonly agents: AgentService,
+    private readonly changes: WorldChanges,
+    private readonly stats: StatsService,
     config: ConfigService,
   ) {
     this.energy = energyConfig(config);
@@ -98,6 +109,7 @@ export class ConversationsService {
   async send(me: Me, id: string, text: string): Promise<Message> {
     const conversation = await this.db.query.conversations.findFirst({
       where: and(eq(conversations.id, id), eq(conversations.worldId, me.worldId)),
+      with: { messages: { orderBy: desc(messages.createdAt), limit: 1 } },
     });
     if (!conversation) throw new NotFoundException();
 
@@ -106,6 +118,9 @@ export class ConversationsService {
       .insert(messages)
       .values({ conversationId: id, senderId: me.id, text })
       .returning();
+    this.changes.changed(me.worldId);
+    const doubleText = conversation.messages[0]?.senderId === me.id;
+    await this.stats.record(me.worldId, { kind: 'dm', text, doubleText, storyReply: false });
     return toMessage(row, me);
   }
 
@@ -120,22 +135,37 @@ export class ConversationsService {
     });
     if (!story || story.authorId === me.id) throw new NotFoundException();
 
-    // The conversation is unique per (world, agent); create it on the first message.
-    await this.db
-      .insert(conversations)
-      .values({ worldId: me.worldId, agentId: story.authorId })
-      .onConflictDoNothing();
-    const conversation = await this.db.query.conversations.findFirst({
-      where: and(eq(conversations.worldId, me.worldId), eq(conversations.agentId, story.authorId)),
-    });
-    if (!conversation) throw new NotFoundException();
-
+    const conversation = await this.withAgent(me, story.authorId);
     await this.payForMessage(me.worldId);
     const [row] = await this.db
       .insert(messages)
       .values({ conversationId: conversation.id, senderId: me.id, text, storyId })
       .returning();
+    this.changes.changed(me.worldId);
+    await this.stats.record(me.worldId, { kind: 'dm', text, doubleText: false, storyReply: true });
     return { conversationId: conversation.id, message: toMessage({ ...row, story }, me) };
+  }
+
+  /** Opens the user's DM thread with an agent (from their profile), creating it if needed. Free: only sending costs. */
+  async start(me: Me, username: string): Promise<StartConversationResult> {
+    const agent = await this.db.query.accounts.findFirst({
+      where: and(eq(accounts.worldId, me.worldId), eq(accounts.username, username), eq(accounts.kind, 'agent')),
+    });
+    if (!agent) throw new NotFoundException();
+    const { id } = await this.withAgent(me, agent.id);
+    // May be a new (empty) conversation; if nothing changed, preparing again is a no-op.
+    this.changes.changed(me.worldId);
+    return { conversationId: id };
+  }
+
+  /** The user's conversation with an agent. It's unique per (world, agent), created on first use. */
+  private async withAgent(me: Me, agentId: string) {
+    await this.db.insert(conversations).values({ worldId: me.worldId, agentId }).onConflictDoNothing();
+    const conversation = await this.db.query.conversations.findFirst({
+      where: and(eq(conversations.worldId, me.worldId), eq(conversations.agentId, agentId)),
+    });
+    if (!conversation) throw new NotFoundException();
+    return conversation;
   }
 
   /** The agent answers the user's last DM now. Null when there's nothing to answer. */
@@ -143,7 +173,8 @@ export class ConversationsService {
     if (this.replying.has(id)) return null;
     this.replying.add(id);
     try {
-      const row = await this.agents.replyInDm(me, id);
+      // Tracked: the next tick is prepared again once the reply is in (not halfway through it).
+      const row = await this.changes.track(me.worldId, () => this.agents.replyInDm(me, id));
       return row && toMessage(row, me);
     } finally {
       this.replying.delete(id);

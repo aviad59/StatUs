@@ -1,6 +1,8 @@
-import { Camera } from 'lucide-react'
+import { PenLine } from 'lucide-react'
 import { Link, useLoaderData } from 'react-router'
 import { Avatar } from '@/components/Avatar.tsx'
+import { PostGrid } from '@/components/PostGrid.tsx'
+import { StatsBar } from '@/components/StatsBar.tsx'
 import { type profileLoader, useCurrentUser } from '@/loaders.ts'
 
 export function ProfilePage() {
@@ -18,32 +20,17 @@ export function ProfilePage() {
             <span className="font-semibold">{posts.length.toLocaleString('he-IL')}</span> פוסטים
           </p>
         </div>
+        <StatsBar />
       </section>
 
       {/* Your posts, newest first, in Instagram's three-column grid. */}
       <section className="mt-8 border-t border-neutral-200 dark:border-neutral-800">
         {posts.length ? (
-          <ul className="grid grid-cols-3 gap-0.5">
-            {posts.map((post) => (
-              <li key={post.id}>
-                {post.imageUrl ? (
-                  <img
-                    src={post.imageUrl}
-                    alt={post.caption}
-                    className="aspect-square w-full bg-neutral-200 object-cover dark:bg-neutral-800"
-                  />
-                ) : (
-                  <div className="flex aspect-square w-full items-center justify-center bg-neutral-100 p-2 dark:bg-neutral-900">
-                    <p className="line-clamp-5 text-center text-xs">{post.caption}</p>
-                  </div>
-                )}
-              </li>
-            ))}
-          </ul>
+          <PostGrid posts={posts} />
         ) : (
           <Link to="/new" className="flex flex-col items-center gap-2 py-12 text-neutral-500">
-            <Camera size={40} strokeWidth={1.5} />
-            <span className="text-sm">עדיין אין פוסטים. לשתף את הראשון?</span>
+            <PenLine size={40} strokeWidth={1.5} />
+            <span className="text-sm">עדיין אין פוסטים. לכתוב את הראשון?</span>
           </Link>
         )}
       </section>

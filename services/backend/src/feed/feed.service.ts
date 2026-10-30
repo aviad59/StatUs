@@ -1,14 +1,16 @@
 import { randomUUID } from 'node:crypto';
 import { BadRequestException, Inject, Injectable, Logger, NotFoundException } from '@nestjs/common';
-import type { Comment, LikeResult, Post, StoryGroup } from '@status/shared';
-import { and, asc, desc, eq, gt } from 'drizzle-orm';
+import type { Comment, LikeResult, Post, Profile, StoryGroup, User } from '@status/shared';
+import { and, asc, desc, eq, gt, ne } from 'drizzle-orm';
 import { toUser } from '../accounts/to-user';
 import { AiService } from '../ai/ai.service';
 import type { ImageInput } from '../ai/providers/provider';
 import type { Db } from '../db/client';
 import { DB } from '../db/db.module';
-import { type accounts, comments, posts, stories } from '../db/schema';
+import { accounts, comments, posts, stories } from '../db/schema';
+import { StatsService } from '../stats/stats.service';
 import { StorageService } from '../storage/storage.service';
+import { WorldChanges } from '../world/world-changes';
 
 type Account = typeof accounts.$inferSelect;
 
@@ -62,6 +64,8 @@ export class FeedService {
     @Inject(DB) private readonly db: Db,
     private readonly ai: AiService,
     private readonly storage: StorageService,
+    private readonly changes: WorldChanges,
+    private readonly stats: StatsService,
   ) {}
 
   /**
@@ -82,9 +86,11 @@ export class FeedService {
       .insert(posts)
       .values({ worldId: me.worldId, authorId: me.id, imageUrl, caption })
       .returning();
-    void this.describe(row.id, { data: image.buffer.toString('base64'), mediaType }).catch((error: unknown) =>
-      this.logger.warn(`Could not describe the photo of post ${row.id}: ${String(error)}`),
-    );
+    await this.stats.record(me.worldId, { kind: 'photo_post', text: caption });
+    // Tracked: the agents' next tick gets prepared once they can "see" the photo.
+    void this.changes
+      .track(me.worldId, () => this.describe(row.id, { data: image.buffer.toString('base64'), mediaType }))
+      .catch((error: unknown) => this.logger.warn(`Could not describe the photo of post ${row.id}: ${String(error)}`));
     return toPost({ ...row, author: me, comments: [] });
   }
 
@@ -95,6 +101,8 @@ export class FeedService {
       .insert(posts)
       .values({ worldId: me.worldId, authorId: me.id, imageUrl: null, caption })
       .returning();
+    await this.stats.record(me.worldId, { kind: 'text_post', text: caption });
+    this.changes.changed(me.worldId);
     return toPost({ ...row, author: me, comments: [] });
   }
 
@@ -119,17 +127,26 @@ export class FeedService {
     if (!post) throw new NotFoundException();
 
     const [row] = await this.db.insert(comments).values({ postId, authorId: me.id, text }).returning();
+    await this.stats.record(me.worldId, { kind: 'comment', text });
+    this.changes.changed(me.worldId);
     return { id: row.id, author: toUser(me), text: row.text, createdAt: row.createdAt.toISOString() };
   }
 
   /** The user likes or unlikes a post. */
   async setLiked(me: Account, postId: string, liked: boolean): Promise<LikeResult> {
+    const before = await this.db.query.posts.findFirst({
+      columns: { playerLiked: true },
+      where: and(eq(posts.id, postId), eq(posts.worldId, me.worldId)),
+    });
+    if (!before) throw new NotFoundException();
     const [post] = await this.db
       .update(posts)
       .set({ playerLiked: liked })
       .where(and(eq(posts.id, postId), eq(posts.worldId, me.worldId)))
       .returning();
     if (!post) throw new NotFoundException();
+    // Only a real change counts, not a repeated tap.
+    if (before.playerLiked !== liked) await this.stats.record(me.worldId, { kind: liked ? 'like' : 'unlike' });
     return likes(post);
   }
 
@@ -146,6 +163,24 @@ export class FeedService {
     });
 
     return rows.map(toPost);
+  }
+
+  /** Everyone in the world but the user: the agents, oldest account first. */
+  async getPeople(me: Account): Promise<User[]> {
+    const rows = await this.db.query.accounts.findMany({
+      where: and(eq(accounts.worldId, me.worldId), ne(accounts.id, me.id)),
+      orderBy: asc(accounts.createdAt),
+    });
+    return rows.map(toUser);
+  }
+
+  /** Someone's profile page in the user's world, by username. */
+  async getProfile(worldId: string, username: string): Promise<Profile> {
+    const account = await this.db.query.accounts.findFirst({
+      where: and(eq(accounts.worldId, worldId), eq(accounts.username, username)),
+    });
+    if (!account) throw new NotFoundException();
+    return { user: toUser(account), bio: account.bio, posts: await this.getPosts(worldId, account.id) };
   }
 
   // Grouped by author, most recently active author first. Like Instagram, stories

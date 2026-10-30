@@ -1,10 +1,14 @@
 import { Send, X } from 'lucide-react'
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { useFetcher } from 'react-router'
 import type { storyReplyAction } from '@/actions.ts'
+import { timeAgo } from '@/format.ts'
 import { useCurrentUser } from '@/loaders.ts'
+import { isStorySeen, markStorySeen } from '@/seen.ts'
 import type { StoryGroup } from '@/types.ts'
+import { useVisualViewport } from '@/viewport.ts'
 import { Avatar } from './Avatar.tsx'
+import { UserLink } from './UserLink.tsx'
 
 const STORY_DURATION_MS = 5000
 
@@ -14,12 +18,17 @@ interface StoryViewerProps {
   onClose: () => void
 }
 
+// Opening someone's stories resumes at the first one you haven't watched.
+const firstUnseen = (group: StoryGroup) => Math.max(0, group.stories.findIndex((s) => !isStorySeen(s.id)))
+
 export function StoryViewer({ groups, startGroup, onClose }: StoryViewerProps) {
   const [groupIndex, setGroupIndex] = useState(startGroup)
-  const [storyIndex, setStoryIndex] = useState(0)
+  const [storyIndex, setStoryIndex] = useState(() => firstUnseen(groups[startGroup]))
   const group = groups[groupIndex]
   const story = group.stories[storyIndex]
   const currentUser = useCurrentUser()
+  const viewport = useVisualViewport()
+  useEffect(() => markStorySeen(story.id), [story.id])
   const canReply = group.user.id !== currentUser.id
 
   // Replying sends a DM and opens that chat (storyReplyAction). The story pauses
@@ -34,7 +43,7 @@ export function StoryViewer({ groups, startGroup, onClose }: StoryViewerProps) {
       setStoryIndex(storyIndex + 1)
     } else if (groupIndex < groups.length - 1) {
       setGroupIndex(groupIndex + 1)
-      setStoryIndex(0)
+      setStoryIndex(firstUnseen(groups[groupIndex + 1]))
     } else {
       onClose()
     }
@@ -50,7 +59,11 @@ export function StoryViewer({ groups, startGroup, onClose }: StoryViewerProps) {
   }
 
   return (
-    <div className="fixed inset-0 z-20 flex justify-center bg-black">
+    // Sized to the visible screen, so the keyboard pushes the reply box up instead of covering it.
+    <div
+      className="fixed inset-x-0 z-20 flex justify-center bg-black"
+      style={{ top: viewport.offsetTop, height: viewport.height }}
+    >
       <div className="relative h-full w-full max-w-md">
         <img src={story.imageUrl} alt="" className="h-full w-full object-cover" />
         {story.text && (
@@ -83,8 +96,11 @@ export function StoryViewer({ groups, startGroup, onClose }: StoryViewerProps) {
             ))}
           </div>
           <div className="flex items-center gap-2">
-            <Avatar src={group.user.avatarUrl} alt={group.user.username} size={32} />
-            <span className="text-sm font-semibold">{group.user.username}</span>
+            <UserLink user={group.user} className="flex items-center gap-2">
+              <Avatar src={group.user.avatarUrl} alt={group.user.username} size={32} />
+              <span className="text-sm font-semibold">{group.user.username}</span>
+            </UserLink>
+            <span className="text-xs text-white/70">{timeAgo(story.createdAt)}</span>
             <button type="button" onClick={onClose} className="ms-auto" aria-label="סגירה">
               <X size={26} />
             </button>

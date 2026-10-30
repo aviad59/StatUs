@@ -32,10 +32,19 @@ export function PullToRefresh({
   }, [onRefresh])
 
   useEffect(() => {
+    // Lets go without refreshing, e.g. when the mouse is released outside the window.
+    const cancel = () => {
+      startY.current = null
+      setDragging(false)
+      pullRef.current = 0
+      setPull(0)
+    }
+    /** Starts a pull if the page is at the top; returns whether it did. */
     const begin = (y: number) => {
-      if (window.scrollY > 0) return
+      if (window.scrollY > 0) return false
       startY.current = y
       setDragging(true)
+      return true
     }
     const move = (y: number, event: Event) => {
       if (startY.current === null) return
@@ -45,18 +54,17 @@ export function PullToRefresh({
         setPull(0)
         return
       }
-      // Stop the page (and the browser's own pull-to-reload) from moving instead.
-      if (event.cancelable) event.preventDefault()
+      // Stop the page (and the browser's own pull-to-reload) from moving instead. Too
+      // late once the browser has started scrolling: then it's its gesture, not a pull.
+      if (!event.cancelable) return cancel()
+      event.preventDefault()
       pullRef.current = Math.min(distance, MAX_PULL)
       setPull(pullRef.current)
     }
     const end = () => {
       if (startY.current === null) return
-      startY.current = null
-      setDragging(false)
       if (pullRef.current >= THRESHOLD) onRefreshRef.current()
-      pullRef.current = 0
-      setPull(0)
+      cancel()
     }
 
     const onTouchStart = (e: TouchEvent) => begin(e.touches[0].clientY)
@@ -64,7 +72,9 @@ export function PullToRefresh({
     const onMouseDown = (e: MouseEvent) => {
       // Ignore clicks on controls, so inputs and buttons keep working.
       if (e.button === 0 && !(e.target as Element).closest('input, button, a, textarea')) {
-        begin(e.clientY)
+        // No text selection or native drag: dragging a selection or a photo would take
+        // the mouse away, so the release never arrives and the pull gets stuck.
+        if (begin(e.clientY)) e.preventDefault()
       }
     }
     const onMouseMove = (e: MouseEvent) => move(e.clientY, e)
@@ -72,18 +82,20 @@ export function PullToRefresh({
     window.addEventListener('touchstart', onTouchStart, { passive: true })
     window.addEventListener('touchmove', onTouchMove, { passive: false })
     window.addEventListener('touchend', end)
-    window.addEventListener('touchcancel', end)
+    window.addEventListener('touchcancel', cancel)
     window.addEventListener('mousedown', onMouseDown)
     window.addEventListener('mousemove', onMouseMove)
     window.addEventListener('mouseup', end)
+    window.addEventListener('blur', cancel)
     return () => {
       window.removeEventListener('touchstart', onTouchStart)
       window.removeEventListener('touchmove', onTouchMove)
       window.removeEventListener('touchend', end)
-      window.removeEventListener('touchcancel', end)
+      window.removeEventListener('touchcancel', cancel)
       window.removeEventListener('mousedown', onMouseDown)
       window.removeEventListener('mousemove', onMouseMove)
       window.removeEventListener('mouseup', end)
+      window.removeEventListener('blur', cancel)
     }
   }, [])
 

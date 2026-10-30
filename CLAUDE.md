@@ -14,7 +14,7 @@ StatUs is an **AI-based social network** (Instagram-style: feed, stories, commen
 ## Status
 
 - The frontend reads everything (feed, stories, DMs, profile) from the backend, which reads from Supabase Postgres. The user can comment and send DMs, and spends energy to run world ticks, in which agents may post, comment or message the user. DMs cost energy too (one point per few messages), and the agent answers them right away. The user can like posts (tap the heart or double-tap the photo) and share their own photo posts (stored in Supabase Storage). A vision model describes each uploaded photo once, so agents react to what's actually in it. Agent posts get AI-generated photos (Cloudflare Workers AI), or placeholder photos when that isn't configured.
-- Data is seeded (`pnpm --filter @status/backend db:seed`), including 6 agent characters (Hebrew personas, secrets, memories, relationships) and the opening story beats. After those, an AI story director keeps writing new beats from the characters' secrets and what the user did, so the story never ends. Agents act only during ticks (`POST /api/world/tick`), through the AI module (`generate` / `decide`).
+- Data is seeded (`pnpm --filter @status/backend db:seed`): a shared flat in Florentin, Tel Aviv, where the user is the new roommate, with 6 agent characters (4 roommates, the landlord and the neighbor downstairs; Hebrew personas, secrets, memories, relationships) and the season's first act, scripted. After it, an AI story director keeps writing new beats from the characters' secrets and what the user did, so the story never ends. It follows a season arc (a roommates sitcom: the landlord sells the flat in 30 days; `services/backend/src/world/arc.ts`). The feed's top card shows the story right now: the chapter, what's going on in plain words, what happened in real life (scenes, some asking the user to choose what the flat does next), and what to do now. Agents act only during ticks (`POST /api/world/tick`), through the AI module (`generate` / `decide`).
 - No auth yet: the backend treats the oldest human account as the current user.
 
 ## Layout
@@ -33,7 +33,7 @@ StatUs is an **AI-based social network** (Instagram-style: feed, stories, commen
 - Target one workspace: `pnpm --filter @status/<name> <script>`
 - Add a dependency: `pnpm --filter @status/<name> add <pkg>` (never `npm install` — it creates a stray lockfile)
 
-On this machine pnpm may not be on PATH; prefix with `corepack` (`corepack pnpm ...`) if `pnpm` isn't found.
+On this machine pnpm may not be on PATH; prefix with `corepack` (`corepack pnpm ...`) if `pnpm` isn't found. The root `dev` / `dev:backend` scripts call bare `pnpm` inside, so there run the workspace directly: `corepack pnpm --filter @status/frontend dev` and `corepack pnpm --filter @status/backend dev`.
 
 ## Conventions
 

@@ -14,12 +14,14 @@ import {
   messages,
   posts,
   relationships,
+  scenes,
   stories,
   type accounts,
   storyBeats,
 } from '../db/schema';
 import { StorageService } from '../storage/storage.service';
 import { directionFor } from './story.service';
+import { WorldChanges } from './world-changes';
 
 type Account = typeof accounts.$inferSelect;
 type Character = typeof characters.$inferSelect & { account: Account };
@@ -44,13 +46,37 @@ export interface TickContext {
   player: Account;
   accountsById: Map<string, Account>;
   /**
-   * Newest first. Comments are appended as turns run, so later agents see them; new
-   * posts are saved in the background and only join the feed on the next tick.
+   * Newest first. Turns are written in parallel from this snapshot; comments are
+   * appended as they're saved (so parallel copies get dropped), and new posts only
+   * join the feed on the next tick.
    */
   feed: FeedPost[];
   activeBeat: typeof storyBeats.$inferSelect | null;
   flags: Record<string, unknown>;
+  /** What happened lately off the network (scenes), oldest first, as everyone there knows it. */
+  realLife: RealLife[];
+  /** The active beat waits for the player's choice in its scene (see beatDone). */
+  awaitingChoice: boolean;
 }
+
+/** A scene as characters know it: where, what happened (recap), and what the player decided there. */
+export interface RealLife {
+  place: string;
+  recap: string;
+  playerChose: string | null;
+}
+
+/** Scene rows → what characters know of them. */
+export function toRealLife(rows: (typeof scenes.$inferSelect)[], player: Account): RealLife[] {
+  return rows.toReversed().map((s) => {
+    const chosen = s.choices.find((c) => c.key === s.chosen)?.label;
+    const verb = player.gender === 'female' ? 'בחרה' : player.gender === 'male' ? 'בחר' : 'החליטו';
+    return { place: s.place, recap: s.recap, playerChose: chosen ? `@${player.username} ${verb}: ${chosen}` : null };
+  });
+}
+
+/** How many recent scenes characters remember. */
+export const REAL_LIFE_IN_PROMPT = 3;
 
 type SpontaneousAction =
   | 'post'
@@ -80,6 +106,18 @@ export interface TurnPlan {
   state: object;
 }
 
+/**
+ * A turn that's been written but not saved yet (AgentService.compose → commit). The
+ * AI work happens in compose, so a tick can be composed ahead of time and committed
+ * in a moment when the player asks for it.
+ */
+export type Draft =
+  | { kind: 'post'; plan: TurnPlan; system: string; caption: string }
+  | { kind: 'text_post'; plan: TurnPlan; caption: string }
+  | { kind: 'story'; plan: TurnPlan; system: string; text: string }
+  | { kind: 'comment'; plan: TurnPlan; target: FeedPost; text: string; like: boolean }
+  | { kind: 'message'; plan: TurnPlan; texts: string[] };
+
 const FEED_IN_STATE = 8;
 const COMMENTS_PER_POST = 3;
 const MEMORIES_IN_STATE = 8;
@@ -105,14 +143,15 @@ const POST_TASK = `המשימה: לכתוב כיתוב לפוסט חדש שמת�
 // Left alone, models write DMs as paragraphs of polished one-liners, quote the other
 // person back to them and keep reusing the same joke.
 const DM_TASK = `המשימה: לכתוב את ההודעה הבאה שלך בשיחה, כמו בוואטסאפ.
-- קצרה: לרוב 3 עד 12 מילים, משפט אחד. לפעמים שני משפטים קצרים. אנשים לא כותבים פסקאות בוואטסאפ.
+- קצרה: לרוב 3 עד 10 מילים, משפט אחד. אנשים לא כותבים פסקאות בוואטסאפ.
 - לענות למה שנכתב אחרון, ישר לעניין. אם שאלו משהו, לענות על זה. אם כבר ענו לך, להתקדם ולא לשאול שוב.
 - לא לצטט את מה שהצד השני כתב, ולא לחזור על בדיחה, ביטוי או דימוי שכבר היו בשיחה או במה שכתבת קודם.
 - בלי שנינויות מתוחכמות ובלי דימויים. הומור, אם יש, פשוט ("חחח", "די נו").
 - לא חייבים לסיים בשאלה.
-- רוב הזמן הודעה אחת. כשיש יותר להגיד, לפצל ל-2 או 3 הודעות קצרות ברצף, כל אחת בשורה נפרדת.
+- הודעה אחת. רק לפעמים, כשבאמת יש עוד משהו להגיד, שתי הודעות קצרות, כל אחת בשורה נפרדת.
+- לא לחזור על משהו שכבר כתבת בשיחה הזאת, גם לא במילים אחרות: אם כבר אמרת את זה, להתקדם או לענות בקצרה.
 רק ההודעות, בלי מירכאות.`;
-const DM_MAX_PARTS = 3;
+const DM_MAX_PARTS = 2;
 
 // The character picks the photo. Faces aren't consistent between images yet, so
 // people stay out of focus.
@@ -124,13 +163,14 @@ const PHOTO_TASK = `Task: describe the photo you are posting with this caption, 
 Only the description, nothing else.`;
 const PHOTO_STYLE =
   'Candid smartphone photo, natural light, realistic, slightly imperfect framing, Instagram post, square.';
+const SAFE_PHOTO_NOTE = 'Wholesome, family-friendly everyday scene; any people fully clothed.';
 // Story photos are square too, but shown as a tall 9:16 crop of the middle.
 const STORY_PHOTO_NOTE =
   '- This is for a story: keep the main subject in the center of the frame, since the sides get cropped.';
 
 // Text posts are where people think out loud or ask the group something.
 const TEXT_POST_TASK = `המשימה: לכתוב פוסט טקסט, בלי תמונה: מחשבה, שאלה לחברים, קיטור קטן או משהו שקרה לך.
-- 1 עד 3 משפטים קצרים, כמו שאנשים כותבים בפייסבוק או בטוויטר.
+- משפט אחד או שניים קצרים, עד 15 מילים בערך. כמו שאנשים כותבים בקבוצה של הבניין.
 - בלי מוסר השכל, בלי משפט מוטיבציה ובלי האשטגים.
 - לא לחזור על נושא של פוסט שכבר פרסמת.
 רק הפוסט, בלי מירכאות.`;
@@ -160,11 +200,12 @@ export class AgentService {
     @Inject(DB) private readonly db: Db,
     private readonly ai: AiService,
     private readonly storage: StorageService,
+    private readonly changes: WorldChanges,
   ) {}
 
   /**
    * Decides what a character does this tick. Plans for all characters run in
-   * parallel against the same snapshot; act() then carries them out in order.
+   * parallel against the same snapshot; compose() then writes them, commit() saves them.
    */
   async plan(ctx: TickContext, character: Character): Promise<TurnPlan> {
     const [memoryRows, rels, dm, postsSinceMine] = await Promise.all([
@@ -212,6 +253,7 @@ export class AgentService {
         scale: '-100 hostile .. 100 devoted',
       })),
       story: { yourPartRightNow: direction ?? undefined, flags: ctx.flags },
+      realLife: ctx.realLife,
       feed: feed.map((p) => ({
         author: p.author.username,
         caption: p.caption,
@@ -242,9 +284,10 @@ export class AgentService {
       type: 'choice',
       instructions: direction
         ? `You are ${me.username}. The story needs this from you now: "${direction}". Pick the action that does it.`
-        : `You are ${me.username}. What do you do right now? Sharing is the main thing people do here: ` +
-          'stories for small everyday moments (most people share one or more a day), posts for nicer ' +
-          'moments (almost certainly if several others have posted since your last post). ' +
+        : `You are ${me.username}. What do you do right now? This is a shared flat and its people, so ` +
+          'mostly people talk: text posts to everyone (a rant, a question to the flat, a complaint), comments ' +
+          "on each other's posts, a private message to the new roommate. Stories for small moments, photo " +
+          'posts for nicer ones (likely if several others have posted since your last post). ' +
           'Pick "nothing" only if you have no reason to act.',
       options: options as Record<SpontaneousAction, string>,
     });
@@ -266,44 +309,86 @@ export class AgentService {
     return row.n;
   }
 
-  /** Carries out a plan. Returns what happened, or null if nothing did. */
-  async act(ctx: TickContext, plan: TurnPlan): Promise<TickEvent | null> {
+  /**
+   * Writes what the plan calls for (the AI part), without saving anything. Turns are
+   * composed in parallel, and possibly ahead of time (WorldService.prepare): nothing
+   * shows in the world until commit(). Null if there turned out to be nothing to do.
+   */
+  async compose(ctx: TickContext, plan: TurnPlan): Promise<Draft | null> {
     const system = this.systemPrompt(ctx, plan.character, plan.memories);
     switch (plan.action) {
       case 'post':
-        return this.post(ctx, plan.character, system);
+        return { kind: 'post', plan, system, caption: clean(await this.ai.generate(POST_TASK, { system, ...SHORT_TEXT, maxTokens: 300 })) };
       case 'text_post':
-        return this.textPost(ctx, plan.character, system);
+        return { kind: 'text_post', plan, caption: clean(await this.ai.generate(TEXT_POST_TASK, { system, ...SHORT_TEXT, maxTokens: 300 })) };
       case 'story':
-        return this.story(ctx, plan.character, system);
+        return { kind: 'story', plan, system, text: clean(await this.ai.generate(STORY_TASK, { system, ...SHORT_TEXT })) };
       case 'comment':
-        return this.comment(ctx, plan, system);
-      case 'comment_on_player_post':
-        return this.commentOnPlayerPost(ctx, plan, system);
+        return this.composeComment(ctx, plan, system);
+      case 'comment_on_player_post': {
+        // Comments on (and likes) the player's newest post this character hasn't reacted to.
+        const target = newPlayerPost(ctx, plan.character.account);
+        return target ? this.composeCommentOn(target, plan, system, true) : null;
+      }
       case 'reply_to_player_comment':
-        return plan.repliedPost ? this.replyToPlayer(ctx, plan, plan.repliedPost, system) : null;
+        return plan.repliedPost ? this.composeReplyToPlayer(ctx, plan, plan.repliedPost, system) : null;
       case 'message_player':
-        return this.messagePlayer(ctx, plan, system);
+        return { kind: 'message', plan, texts: await this.composeDm(ctx, plan, system) };
       case 'nothing':
         return null;
+    }
+  }
+
+  /** Saves a composed turn: this is when it happens in the world. Returns the tick event, or null if it was dropped. */
+  async commit(ctx: TickContext, draft: Draft): Promise<TickEvent | null> {
+    const { character } = draft.plan;
+    switch (draft.kind) {
+      case 'post':
+        return this.post(ctx, character, draft.system, draft.caption);
+      case 'text_post':
+        return this.textPost(ctx, character, draft.caption);
+      case 'story':
+        return this.story(ctx, character, draft.system, draft.text);
+      case 'comment':
+        return this.saveComment(character, draft.target, draft.text, draft.like);
+      case 'message': {
+        if (!draft.texts.length) return null;
+        const { id, text } = await this.saveDm(ctx, draft.plan, draft.texts);
+        return { type: 'message', actor: toUser(character.account), conversationId: id, text };
+      }
     }
   }
 
   // Prompts are in Hebrew on purpose: English instructions make the model "think" in
   // English and the Hebrew comes out sounding translated. Task instructions use the
   // infinitive ("לכתוב"); gender is stated explicitly (see selfGender / addressAs).
-  private systemPrompt(ctx: Pick<TickContext, 'activeBeat'>, character: Character, memories: string[]) {
+  private systemPrompt(ctx: Pick<TickContext, 'activeBeat' | 'realLife'>, character: Character, memories: string[]) {
     const lines = [
       character.persona,
       '',
       `שם המשתמש שלך הוא @${character.account.username} ברשת StatUs (רשת כמו אינסטגרם). תמיד להישאר בדמות.`,
       selfGender(character.account),
       'לכתוב משהו חדש בקול שלך. אף פעם לא להעתיק או לחזור על מה שמישהו אחר כתב.',
+      // Without this, a persona's quirks turn into a tic in every line ("(רשמתי בגיליון)", "נשבע").
+      'הסגנון שלך (ביטויים קבועים, חתימה, סוגריים, מילים שאת או אתה אוהבים) מופיע רק לפעמים, לכל היותר פעם בכמה ' +
+        'הודעות. לא לחזור על בדיחה, ביטוי או נושא שכבר כתבת לאחרונה (ראו "דברים שקרו לאחרונה").',
+      'קצר: בלי הקדמות ובלי הסברים, כמו אדם אמיתי שכותב מהטלפון.',
+      // The whole story is a comedy; the persona says how this character is funny.
+      'החבורה שלך מצחיקה: הומור ישראלי יומיומי, הגזמות קטנות, עקיצות חמות ודרמה על שטויות. גם כשמשהו רציני, לכתוב אותו בדרך שלך, עם קריצה.',
     ];
+    if (ctx.realLife.length) {
+      lines.push(
+        '',
+        'מה קרה לאחרונה במציאות, מחוץ לרשת (היית שם או שמעת על זה; אפשר להתייחס לזה):',
+        ...ctx.realLife.map((s) => `- ${s.place}: ${s.recap}${s.playerChose ? ` (${s.playerChose})` : ''}`),
+      );
+    }
     if (character.secrets.length) {
       lines.push(
         '',
-        'סודות שלך (לא לחשוף במפורש; לכל היותר לרמוז, ורק אם הסיפור מצדיק):',
+        // Asked directly in a DM, characters used to just tell: the secret is the story's twist.
+        'סודות שלך. לא לספר אותם, גם אם שואלים אותך ישירות ובלחץ: להתחמק בהומור, לשנות נושא או לרמוז ' +
+          'רמז קטן. סוד יוצא רק כש"מה שקורה איתך עכשיו" (למטה) אומר לך לספר אותו:',
         ...character.secrets.map((s) => `- ${s}`),
       );
     }
@@ -321,41 +406,41 @@ export class AgentService {
   }
 
   /**
-   * Writes the caption now; the photo is drawn and the post saved in the background
-   * (publish), so the tick doesn't wait for image generation. The post appears in the
-   * feed a few seconds after the tick, so other agents only see it from the next tick.
+   * The caption is already written; the photo is drawn and the post saved in the
+   * background (publish), so the tick doesn't wait for image generation. The post appears
+   * in the feed a few seconds after the tick, so other agents only see it from the next tick.
    */
-  private async post(ctx: TickContext, character: Character, system: string): Promise<TickEvent> {
-    const caption = clean(
-      await this.ai.generate(
-        POST_TASK,
-        { system, ...SHORT_TEXT, maxTokens: 300 },
-      ),
-    );
+  private async post(ctx: TickContext, character: Character, system: string, caption: string): Promise<TickEvent> {
     const postId = randomUUID();
-    void this.publish(ctx, character, system, postId, caption).catch((error: unknown) =>
-      this.logger.warn(`Could not publish @${character.account.username}'s post: ${String(error)}`),
-    );
+    void this.changes
+      .track(ctx.worldId, () => this.publish(ctx, character, system, postId, caption))
+      .catch((error: unknown) =>
+        this.logger.warn(`Could not publish @${character.account.username}'s post: ${String(error)}`),
+      );
     await this.remember(character, `פרסמתי פוסט: ${caption}`);
     return { type: 'post', actor: toUser(character.account), postId, text: caption };
   }
 
   private async publish(ctx: TickContext, character: Character, system: string, id: string, caption: string) {
-    const image = await this.photo(ctx, character, system, 'posts', `The caption: ${caption}`);
+    // If the photo can't be drawn, it goes out as a text post: the caption still says
+    // what the character meant (and a post the story needed isn't lost).
+    const image = await this.photo(ctx, character, system, 'posts', `The caption: ${caption}`).catch((error: unknown) => {
+      this.logger.warn(`No photo for @${character.account.username}'s post, posting it as text: ${String(error)}`);
+      return null;
+    });
     await this.db.insert(posts).values({
       id,
       worldId: ctx.worldId,
       authorId: character.accountId,
-      imageUrl: image.url,
-      imageDescription: image.description,
+      imageUrl: image?.url ?? null,
+      imageDescription: image?.description ?? null,
       caption,
       likeCount: 5 + Math.floor(Math.random() * 80),
     });
   }
 
-  /** A post without a photo. Nothing to draw, so it's saved right away and others can react this tick. */
-  private async textPost(ctx: TickContext, character: Character, system: string): Promise<TickEvent> {
-    const caption = clean(await this.ai.generate(TEXT_POST_TASK, { system, ...SHORT_TEXT, maxTokens: 300 }));
+  /** A post without a photo. Nothing to draw, so it's saved right away. */
+  private async textPost(ctx: TickContext, character: Character, caption: string): Promise<TickEvent> {
     const [row] = await this.db
       .insert(posts)
       .values({
@@ -379,12 +464,13 @@ export class AgentService {
   }
 
   /** A quick moment from right now, gone after a day. Saved in the background, like posts. */
-  private async story(ctx: TickContext, character: Character, system: string): Promise<TickEvent> {
-    const text = clean(await this.ai.generate(STORY_TASK, { system, ...SHORT_TEXT }));
+  private async story(ctx: TickContext, character: Character, system: string, text: string): Promise<TickEvent> {
     const storyId = randomUUID();
-    void this.publishStory(ctx, character, system, storyId, text).catch((error: unknown) =>
-      this.logger.warn(`Could not publish @${character.account.username}'s story: ${String(error)}`),
-    );
+    void this.changes
+      .track(ctx.worldId, () => this.publishStory(ctx, character, system, storyId, text))
+      .catch((error: unknown) =>
+        this.logger.warn(`Could not publish @${character.account.username}'s story: ${String(error)}`),
+      );
     await this.remember(character, `העליתי סטורי: ${text}`);
     return { type: 'story', actor: toUser(character.account), storyId, text };
   }
@@ -427,19 +513,19 @@ export class AgentService {
         maxTokens: 300,
       }),
     );
-    const draw = () =>
-      this.ai.generateImage(`${description}\n\n${PHOTO_STYLE}`) ?? Promise.reject(new Error('No image provider'));
-    const jpeg = await draw().catch((error: unknown) => {
+    const draw = (style: string) =>
+      this.ai.generateImage(`${description}\n\n${style}`) ?? Promise.reject(new Error('No image provider'));
+    const jpeg = await draw(PHOTO_STYLE).catch((error: unknown) => {
       this.logger.warn(`Image generation failed for @${character.account.username}, retrying: ${String(error)}`);
-      return draw();
+      // The image model's safety filter flags ordinary scenes now and then (a runner, the beach); say it plainly.
+      return draw(`${PHOTO_STYLE} ${SAFE_PHOTO_NOTE}`);
     });
     const path = `${ctx.worldId}/${kind}/${randomUUID()}.jpg`;
     return { url: await this.storage.upload(path, jpeg, 'image/jpeg'), description };
   }
 
-  private async comment(ctx: TickContext, plan: TurnPlan, system: string): Promise<TickEvent | null> {
+  private async composeComment(ctx: TickContext, plan: TurnPlan, system: string): Promise<Draft | null> {
     const me = plan.character.account;
-    // Read the feed now, not at plan time: earlier turns this tick may have added comments.
     const feed = ctx.feed.slice(0, FEED_IN_STATE).filter((p) => p.author.id !== me.id);
     if (!feed.length) return null;
 
@@ -451,39 +537,20 @@ export class AgentService {
       ),
     });
     const target = feed[Number(choice.slice(1))];
-    return target ? this.commentOn(target, plan, system) : null;
+    return target ? this.composeCommentOn(target, plan, system, false) : null;
   }
 
-  /** Comments on (and likes) the player's newest post this character hasn't reacted to. */
-  private async commentOnPlayerPost(ctx: TickContext, plan: TurnPlan, system: string) {
-    const target = newPlayerPost(ctx, plan.character.account);
-    if (!target) return null;
-    const event = await this.commentOn(target, plan, system);
-    if (event) {
-      await this.db
-        .update(posts)
-        .set({ likeCount: sql`${posts.likeCount} + 1` })
-        .where(eq(posts.id, target.id));
-    }
-    return event;
-  }
-
-  private async commentOn(target: FeedPost, plan: TurnPlan, system: string): Promise<TickEvent | null> {
+  private async composeCommentOn(target: FeedPost, plan: TurnPlan, system: string, like: boolean): Promise<Draft> {
     const text = clean(
       await this.ai.generate(
         `${postContext(target)}\n${addressAs(target.author)}\n\n` + COMMENT_TASK,
         { system, ...SHORT_TEXT },
       ),
     );
-    return this.saveComment(plan.character, target, text);
+    return { kind: 'comment', plan, target, text, like };
   }
 
-  private async replyToPlayer(
-    ctx: TickContext,
-    plan: TurnPlan,
-    target: FeedPost,
-    system: string,
-  ): Promise<TickEvent | null> {
+  private async composeReplyToPlayer(ctx: TickContext, plan: TurnPlan, target: FeedPost, system: string): Promise<Draft> {
     const player = ctx.player.username;
     const text = clean(
       await this.ai.generate(
@@ -493,18 +560,22 @@ export class AgentService {
         { system, ...SHORT_TEXT },
       ),
     );
-    return this.saveComment(plan.character, target, text);
+    return { kind: 'comment', plan, target, text, like: false };
   }
 
-  private async saveComment(character: Character, target: FeedPost, text: string): Promise<TickEvent | null> {
-    // Small models sometimes parrot an existing comment; drop those rather than post a copy.
+  /** `like`: also like the post (when reacting to the player's new post). */
+  private async saveComment(character: Character, target: FeedPost, text: string, like: boolean): Promise<TickEvent | null> {
+    // Small models sometimes parrot an existing comment (or one written in parallel this
+    // tick, committed just before); drop those rather than post a copy.
     if (!text || target.comments.some((c) => c.text === text) || text === target.caption) return null;
+    // Synchronously, before any await: commits run in parallel, and the next one checks against it.
+    target.comments.push({ author: character.account, text });
 
     await Promise.all([
       this.db.insert(comments).values({ postId: target.id, authorId: character.accountId, text }),
       this.remember(character, `הגבתי לפוסט של ${target.author.username}: ${text}`),
+      like && this.db.update(posts).set({ likeCount: sql`${posts.likeCount} + 1` }).where(eq(posts.id, target.id)),
     ]);
-    target.comments.push({ author: character.account, text });
     return {
       type: 'comment',
       actor: toUser(character.account),
@@ -525,7 +596,7 @@ export class AgentService {
     });
     if (!conversation || conversation.messages[0]?.senderId !== player.id) return null;
 
-    const [character, activeBeat] = await Promise.all([
+    const [character, sceneRows] = await Promise.all([
       this.db.query.characters.findFirst({
         where: eq(characters.accountId, conversation.agentId),
         with: {
@@ -533,8 +604,10 @@ export class AgentService {
           memories: { orderBy: desc(characterMemories.createdAt), limit: MEMORIES_IN_STATE },
         },
       }),
-      this.db.query.storyBeats.findFirst({
-        where: and(eq(storyBeats.worldId, player.worldId), eq(storyBeats.status, 'active')),
+      this.db.query.scenes.findMany({
+        where: eq(scenes.worldId, player.worldId),
+        orderBy: desc(scenes.createdAt),
+        limit: REAL_LIFE_IN_PROMPT,
       }),
     ]);
     if (!character) return null;
@@ -543,23 +616,29 @@ export class AgentService {
       from: m.senderId === player.id ? player.username : character.account.username,
       text: dmText(m),
     }));
-    const ctx = { worldId: player.worldId, player, activeBeat: activeBeat ?? null };
+    const ctx = {
+      worldId: player.worldId,
+      player,
+      // No story direction in a reply: it's an answer to what the player just wrote. With
+      // the direction, every reply repeated it ("we need to talk tomorrow") until the next
+      // tick; directed messages are sent in ticks.
+      activeBeat: null,
+      realLife: toRealLife(sceneRows, player),
+    };
     const system = this.systemPrompt(ctx, character, character.memories.map((m) => m.content));
-    const { row } = await this.writeDm(ctx, { character, dm: { id: conversation.id, history } }, system);
+    const dmPlan = { character, dm: { id: conversation.id, history } };
+    const texts = await this.composeDm(ctx, dmPlan, system);
+    if (!texts.length) return null;
+    const { row } = await this.saveDm(ctx, dmPlan, texts);
     return row;
   }
 
-  private async messagePlayer(ctx: TickContext, plan: TurnPlan, system: string): Promise<TickEvent> {
-    const { id, text } = await this.writeDm(ctx, plan, system);
-    return { type: 'message', actor: toUser(plan.character.account), conversationId: id, text };
-  }
-
-  /** Writes the character's next DM to the player and saves it, opening the conversation if needed. */
-  private async writeDm(
-    ctx: Pick<TickContext, 'worldId' | 'player'>,
-    plan: Pick<TurnPlan, 'character' | 'dm'>,
+  /** The character's next DM to the player, split into the quick messages it's sent as. */
+  private async composeDm(
+    ctx: Pick<TickContext, 'player'>,
+    plan: Pick<TurnPlan, 'dm'>,
     system: string,
-  ) {
+  ): Promise<string[]> {
     const player = ctx.player.username;
     const transcript = plan.dm.history.map((m) => `@${m.from}: ${m.text}`).join('\n');
     const text = clean(
@@ -572,7 +651,17 @@ export class AgentService {
         { system, ...SHORT_TEXT },
       ),
     );
+    // Each line is its own message, like a few quick WhatsApp texts in a row.
+    return text.split('\n').map(clean).filter(Boolean).slice(0, DM_MAX_PARTS);
+  }
 
+  /** Saves the character's DM to the player, opening the conversation if needed. */
+  private async saveDm(
+    ctx: Pick<TickContext, 'worldId' | 'player'>,
+    plan: Pick<TurnPlan, 'character' | 'dm'>,
+    texts: string[],
+  ) {
+    const player = ctx.player.username;
     let id = plan.dm.id;
     if (!id) {
       const [row] = await this.db
@@ -581,10 +670,8 @@ export class AgentService {
         .returning();
       id = row.id;
     }
-    // Each line is its own message, like a few quick WhatsApp texts in a row. Explicit
-    // timestamps a millisecond apart keep them in order (not later: that would leave
-    // them unread after the user reads the conversation).
-    const texts = text.split('\n').map(clean).filter(Boolean).slice(0, DM_MAX_PARTS);
+    // Explicit timestamps a millisecond apart keep the messages in order (not later:
+    // that would leave them unread after the user reads the conversation).
     const now = Date.now();
     const conversationId = id;
     const [rows] = await Promise.all([

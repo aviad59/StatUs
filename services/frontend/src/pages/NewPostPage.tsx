@@ -5,8 +5,8 @@ import type { createPostAction } from '@/actions.ts'
 import { resizeImage } from '@/image.ts'
 
 /**
- * Pick a photo, write a caption, share; or skip the photo for a text-only post. The
- * photo is resized on the phone before upload.
+ * Write a post and share it. Text first (most posts are words); a photo is optional, and
+ * is resized on the phone before upload.
  */
 export function NewPostPage() {
   const fetcher = useFetcher<typeof createPostAction>()
@@ -74,6 +74,18 @@ export function NewPostPage() {
         }}
       />
 
+      {/* Text first: most posts here are words (a rant about the fridge, a question to the flat). */}
+      <textarea
+        value={caption}
+        onChange={(e) => setCaption(e.target.value)}
+        maxLength={2200}
+        rows={image ? 3 : 7}
+        autoFocus
+        placeholder={image ? 'כתיבת כיתוב...' : 'מה קורה בדירה? קיטור, שאלה לשותפים, עדכון...'}
+        disabled={sharing}
+        className="w-full resize-none bg-transparent p-4 text-base leading-relaxed outline-none"
+      />
+
       {image ? (
         <div className="relative">
           <button
@@ -102,23 +114,12 @@ export function NewPostPage() {
           type="button"
           onClick={() => inputRef.current?.click()}
           disabled={sharing}
-          className="flex h-40 w-full flex-col items-center justify-center gap-2 bg-neutral-100 text-neutral-500 dark:bg-neutral-900"
+          className="mx-4 flex items-center gap-2 self-start rounded-full border border-neutral-300 px-3 py-1.5 text-sm text-neutral-600 dark:border-neutral-700 dark:text-neutral-300"
         >
-          <ImagePlus size={40} strokeWidth={1.5} />
-          <span className="text-sm">הוספת תמונה מהגלריה</span>
-          <span className="text-xs">או לכתוב פוסט בלי תמונה</span>
+          <ImagePlus size={16} />
+          להוסיף תמונה (לא חובה)
         </button>
       )}
-
-      <textarea
-        value={caption}
-        onChange={(e) => setCaption(e.target.value)}
-        maxLength={2200}
-        rows={image ? 3 : 5}
-        placeholder={image ? 'כתיבת כיתוב...' : 'על מה חושבים?'}
-        disabled={sharing}
-        className="w-full resize-none bg-transparent p-3 text-sm outline-none"
-      />
 
       {(error || failed) && <p className="px-3 text-sm text-red-500">{error ?? failed}</p>}
     </div>

@@ -3,11 +3,35 @@
   <head>
     <meta charset="UTF-8" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!-- resizes-content: on Android the keyboard shrinks the page instead of covering it (iOS: see src/viewport.ts). -->
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, interactive-widget=resizes-content" />
     <title>StatUs</title>
   </head>
   <body>
     <div id="root"></div>
+    <!-- If the app crashes before it renders (an old phone browser, say), show why instead of a white page.
+         Plain ES5 on purpose, so it runs even where the app's code doesn't. -->
+    <script>
+      ;(function () {
+        function show(message) {
+          var root = document.getElementById('root')
+          if (!root || root.childNodes.length) return
+          root.innerHTML =
+            '<div style="padding:24px;font-family:sans-serif;direction:rtl">' +
+            '<p style="font-weight:bold">האפליקציה לא נטענה בדפדפן הזה.</p>' +
+            '<pre dir="ltr" style="white-space:pre-wrap;font-size:12px;color:#b91c1c"></pre>' +
+            '<p style="font-size:12px;color:#666" dir="ltr"></p></div>'
+          root.querySelector('pre').textContent = String(message)
+          root.querySelector('p[dir]').textContent = navigator.userAgent
+        }
+        window.addEventListener('error', function (e) {
+          show(e.message || (e.target && e.target.src ? 'Failed to load ' + e.target.src : 'Unknown error'))
+        }, true)
+        window.addEventListener('unhandledrejection', function (e) {
+          show(e.reason && (e.reason.stack || e.reason.message) || e.reason)
+        })
+      })()
+    </script>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

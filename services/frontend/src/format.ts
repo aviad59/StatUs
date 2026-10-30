@@ -14,7 +14,8 @@ const UNITS: [Intl.RelativeTimeFormatUnit, number][] = [
 function relativeTime(iso: string, underAMinute: string): string {
   const seconds = (new Date(iso).getTime() - Date.now()) / 1000
   for (const [unit, size] of UNITS) {
-    if (Math.abs(seconds) >= size) return relative.format(Math.round(seconds / size), unit)
+    // ICU writes Hebrew dual forms with the number in brackets ("לפני שעתיים (2)"); drop it.
+    if (Math.abs(seconds) >= size) return relative.format(Math.round(seconds / size), unit).replace(/\s*\(2\)$/, '')
   }
   return underAMinute
 }

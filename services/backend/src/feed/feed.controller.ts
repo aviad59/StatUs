@@ -17,7 +17,9 @@ import type {
   LikeBody,
   LikeResult,
   Post,
+  Profile,
   StoryGroup,
+  User,
 } from '@status/shared';
 import { CurrentUserService } from '../accounts/current-user.service';
 import { createPostBody, likeBody, textBody } from '../common/schemas';
@@ -55,6 +57,19 @@ export class FeedController {
     @Body(new ZodBodyPipe(createPostBody)) body: CreatePostBody,
   ): Promise<Post> {
     return this.feed.createPost(await this.currentUser.get(), image, body.caption);
+  }
+
+  /** Everyone else in the user's world (the agents). */
+  @Get('accounts')
+  async getPeople(): Promise<User[]> {
+    return this.feed.getPeople(await this.currentUser.get());
+  }
+
+  /** A profile page by username: bio and posts. */
+  @Get('accounts/:username')
+  async getProfile(@Param('username') username: string): Promise<Profile> {
+    const me = await this.currentUser.get();
+    return this.feed.getProfile(me.worldId, username);
   }
 
   @Get('stories')

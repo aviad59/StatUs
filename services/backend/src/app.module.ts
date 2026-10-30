@@ -6,6 +6,7 @@ import { ConversationsModule } from './conversations/conversations.module';
 import { DbModule } from './db/db.module';
 import { FeedModule } from './feed/feed.module';
 import { HealthModule } from './health/health.module';
+import { StatsModule } from './stats/stats.module';
 import { StorageModule } from './storage/storage.module';
 import { WorldModule } from './world/world.module';
 
@@ -20,6 +21,7 @@ import { WorldModule } from './world/world.module';
     FeedModule,
     ConversationsModule,
     WorldModule,
+    StatsModule,
   ],
 })
 export class AppModule {}

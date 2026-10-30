@@ -20,7 +20,7 @@ export function WelcomePage() {
     <div className="flex min-h-dvh flex-col items-center justify-center gap-10 px-6 text-center">
       <div className="space-y-3">
         <h1 className="text-4xl font-bold tracking-tight">StatUs</h1>
-        <p className="text-neutral-500">ברוכים הבאים. החבר׳ה כבר מחכים.</p>
+        <p className="text-neutral-500">ברוכים הבאים לפלורנטין. השותפים כבר מחכים בדירה.</p>
       </div>
 
       <div className="w-full max-w-xs space-y-4">

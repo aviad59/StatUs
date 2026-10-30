@@ -3,14 +3,17 @@ import { usePendingTexts } from '@/actions.ts'
 import { timeAgo } from '@/format.ts'
 import { useCurrentUser } from '@/loaders.ts'
 import type { Post } from '@/types.ts'
+import { useVisualViewport } from '@/viewport.ts'
 import { Avatar } from './Avatar.tsx'
 import { TextForm } from './TextForm.tsx'
+import { UserLink } from './UserLink.tsx'
 
 /** All of a post's comments in a bottom sheet, like Instagram. Tap outside (or Escape) to close. */
 export function CommentsSheet({ post, onClose }: { post: Post; onClose: () => void }) {
   const currentUser = useCurrentUser()
   const commentAction = `/actions/posts/${post.id}/comments`
   const pending = usePendingTexts(commentAction)
+  const viewport = useVisualViewport()
 
   // Keep the feed behind the sheet from scrolling, and close on Escape.
   useEffect(() => {
@@ -25,12 +28,17 @@ export function CommentsSheet({ post, onClose }: { post: Post; onClose: () => vo
   }, [onClose])
 
   return (
-    <div className="fixed inset-0 z-30 flex items-end bg-black/40" onClick={onClose}>
+    // Sized to the visible screen, so the keyboard pushes the sheet up instead of covering its input.
+    <div
+      className="fixed inset-x-0 z-30 flex items-end bg-black/40"
+      style={{ top: viewport.offsetTop, height: viewport.height }}
+      onClick={onClose}
+    >
       <section
         role="dialog"
         aria-label="תגובות"
         onClick={(e) => e.stopPropagation()}
-        className="mx-auto flex max-h-[75dvh] w-full max-w-md flex-col rounded-t-2xl bg-white dark:bg-neutral-900"
+        className="mx-auto flex max-h-[75%] w-full max-w-md flex-col rounded-t-2xl bg-white dark:bg-neutral-900"
       >
         <header className="border-b border-neutral-200 py-2 text-center dark:border-neutral-800">
           <span className="mx-auto mb-2 block h-1 w-10 rounded-full bg-neutral-300 dark:bg-neutral-700" />
@@ -43,10 +51,14 @@ export function CommentsSheet({ post, onClose }: { post: Post; onClose: () => vo
           )}
           {post.comments.map((comment) => (
             <li key={comment.id} className="flex gap-3">
-              <Avatar src={comment.author.avatarUrl} alt={comment.author.username} />
+              <UserLink user={comment.author} className="shrink-0">
+                <Avatar src={comment.author.avatarUrl} alt={comment.author.username} />
+              </UserLink>
               <div>
                 <p>
-                  <span className="font-semibold">{comment.author.username}</span>{' '}
+                  <UserLink user={comment.author} className="font-semibold">
+                    {comment.author.username}
+                  </UserLink>{' '}
                   <span className="text-xs text-neutral-500">{timeAgo(comment.createdAt)}</span>
                 </p>
                 <p>{comment.text}</p>

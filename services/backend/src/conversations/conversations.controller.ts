@@ -1,7 +1,15 @@
 import { Body, Controller, Get, HttpCode, Param, ParseUUIDPipe, Post, Put } from '@nestjs/common';
-import type { Conversation, ConversationSummary, Message, ReplyResult, SendMessageBody } from '@status/shared';
+import type {
+  Conversation,
+  ConversationSummary,
+  Message,
+  ReplyResult,
+  SendMessageBody,
+  StartConversationBody,
+  StartConversationResult,
+} from '@status/shared';
 import { CurrentUserService } from '../accounts/current-user.service';
-import { textBody } from '../common/schemas';
+import { startConversationBody, textBody } from '../common/schemas';
 import { ZodBodyPipe } from '../common/zod-body.pipe';
 import { ConversationsService } from './conversations.service';
 
@@ -15,6 +23,15 @@ export class ConversationsController {
   @Get()
   async list(): Promise<ConversationSummary[]> {
     return this.conversations.list(await this.currentUser.get());
+  }
+
+  /** Opens (or creates) the DM thread with an agent, e.g. from their profile. */
+  @Post()
+  @HttpCode(200)
+  async start(
+    @Body(new ZodBodyPipe(startConversationBody)) body: StartConversationBody,
+  ): Promise<StartConversationResult> {
+    return this.conversations.start(await this.currentUser.get(), body.username);
   }
 
   @Get(':id')

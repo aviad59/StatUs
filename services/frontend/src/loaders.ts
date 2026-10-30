@@ -5,8 +5,11 @@ import { ApiError, api } from '@/api.ts'
 import type {
   Conversation,
   ConversationSummary,
+  PlayerStats,
   Post,
+  Profile,
   StoryGroup,
+  StoryNow,
   User,
   WorldStatus,
 } from '@/types.ts'
@@ -37,32 +40,81 @@ export function prefetchTabs() {
 
 /** The current user, and how many conversations have unread messages (the nav badge). */
 export async function rootLoader({ request }: LoaderFunctionArgs) {
-  const [user, conversations] = await Promise.all([
+  const [user, stats, conversations] = await Promise.all([
     api<User>('/me', { signal: request.signal }),
+    api<PlayerStats>('/me/stats', { signal: request.signal }),
     cached<ConversationSummary[]>('/conversations'),
   ])
-  return { user, unread: conversations.filter((c) => c.unread).length }
+  return { user, stats, unread: conversations.filter((c) => c.unread).length }
 }
 
 /** The signed-in user, loaded once by the root route. */
 export const useCurrentUser = () => useRouteLoaderData<typeof rootLoader>('root')!.user
 
+/** Aura, humor and drama; every action the user takes changes them. */
+export const useStats = () => useRouteLoaderData<typeof rootLoader>('root')!.stats
+
 /** Conversations with messages the user hasn't seen yet. */
 export const useUnreadCount = () => useRouteLoaderData<typeof rootLoader>('root')!.unread
 
 export async function feedLoader() {
-  const [posts, storyGroups, world] = await Promise.all([
+  const [posts, storyGroups, world, story] = await Promise.all([
     cached<Post[]>('/feed'),
     cached<StoryGroup[]>('/stories'),
     cached<WorldStatus>('/world'),
+    cached<StoryNow>('/story'),
   ])
-  return { posts, storyGroups, world }
+  return { posts, storyGroups, world, story }
 }
-
-export const messagesLoader = () => cached<ConversationSummary[]>('/conversations')
 
 /** The current user's own posts, for the profile grid. */
 export const profileLoader = () => cached<Post[]>('/me/posts')
+
+/** Someone's profile page (an agent's). Resolves to null for an unknown username. */
+export async function userLoader({ params }: LoaderFunctionArgs) {
+  try {
+    return await cached<Profile>(`/accounts/${encodeURIComponent(params.username ?? '')}`)
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 404) return null
+    throw error
+  }
+}
+
+/** Conversations, plus everyone you can message (the row of people above them). */
+export async function messagesLoader() {
+  const [conversations, people] = await Promise.all([
+    cached<ConversationSummary[]>('/conversations'),
+    cached<User[]>('/accounts'),
+  ])
+  return { conversations, people }
+}
+
+/** An article on Pull, the made-up news site (static, see services/backend/src/news). */
+export interface NewsArticle {
+  slug: string
+  category: string
+  title: string
+  subtitle: string
+  lead: string
+  image: string
+  /** When it was "published": always recent, counted back from now. */
+  publishedAt: string
+}
+
+/**
+ * Pull's articles: a static file made ahead of time with their photos
+ * (`pnpm --filter @status/backend news:generate`), served from /news. Not the API.
+ */
+export async function newsLoader() {
+  const response = await fetch('/news/articles.json')
+  if (!response.ok) throw new Error(`GET /news/articles.json failed with ${response.status}`)
+  const articles = (await response.json()) as (Omit<NewsArticle, 'publishedAt'> & { hoursAgo: number })[]
+  const now = Date.now()
+  return articles.map(({ hoursAgo, ...article }) => ({
+    ...article,
+    publishedAt: new Date(now - hoursAgo * 3_600_000).toISOString(),
+  }))
+}
 
 /** Resolves to null when the conversation doesn't exist (or the id is malformed). */
 export async function conversationLoader({ params }: LoaderFunctionArgs) {
